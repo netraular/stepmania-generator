@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>StepMania Chart Generator</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <h1>StepMania Chart Generator</h1>
+      <p class="sub">Paste a YouTube link &rarr; get playable
+        <code>dance-single</code> charts from every generator, scored and
+        compared.</p>
+    </header>
+
+    <section class="card">
+      <form id="gen-form">
+        <label>YouTube URL
+          <input id="url" type="url" required
+                 placeholder="https://www.youtube.com/watch?v=..." />
+        </label>
+
+        <div class="row">
+          <label>Title (optional &ndash; auto-detected from YouTube)
+            <input id="title" type="text" placeholder="e.g. Rabbit Hole" />
+          </label>
+        </div>
+
+        <div class="row">
+          <label>Artist (optional)
+            <input id="artist" type="text" placeholder="Unknown" />
+          </label>
+        </div>
+
+        <fieldset>
+          <legend>Difficulties (ours)</legend>
+          <div id="difficulties" class="chips"></div>
+        </fieldset>
+
+        <label class="check">
+          <input id="autostepper" type="checkbox" checked />
+          Also run AutoStepper for comparison
+        </label>
+
+        <button id="go" type="submit">Generate &amp; compare</button>
+      </form>
+    </section>
+
+    <section id="progress" class="card hidden">
+      <h2>Working&hellip;</h2>
+      <div class="bar"><div id="bar-fill"></div></div>
+      <p id="progress-msg" class="muted"></p>
+    </section>
+
+    <section id="results" class="card hidden">
+      <h2>Results</h2>
+      <p id="song-info" class="muted"></p>
+      <div id="generators"></div>
+    </section>
+
+    <footer>
+      <p class="muted">Charts are drafts &mdash; open the <code>.sm</code> in
+        ArrowVortex or GrooveAuthor to refine, then drop the folder into your
+        StepMania / OutFox <code>Songs</code> directory.</p>
+    </footer>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

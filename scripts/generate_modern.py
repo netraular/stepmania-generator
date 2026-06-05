@@ -2,11 +2,14 @@
 against the AutoStepper and DDC baselines on the same objective metrics.
 
 Usage:
-    python scripts/generate_modern.py "songs/Burn the House Down - AJR.mp3"
+    python scripts/generate_modern.py "songs/Song.mp3"
+    python scripts/generate_modern.py "songs/Song.mp3" --artist "AJR" \
+        --difficulties Easy Medium Hard
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -31,8 +34,18 @@ def _print_metrics(label, m):
 
 
 def main():
-    audio = sys.argv[1] if len(sys.argv) > 1 else "songs/Burn the House Down - AJR.mp3"
-    title = os.path.splitext(os.path.basename(audio))[0]
+    parser = argparse.ArgumentParser(description="TempoSync + FootGraph generator")
+    parser.add_argument("audio", nargs="?",
+                        default="songs/Burn the House Down - AJR.mp3",
+                        help="path to the input audio file")
+    parser.add_argument("--artist", default="Unknown", help="artist tag")
+    parser.add_argument("--title", default=None, help="title (defaults to file name)")
+    parser.add_argument("--difficulties", nargs="+", default=None,
+                        help="subset of difficulties, e.g. Easy Medium Hard")
+    args = parser.parse_args()
+
+    audio = args.audio
+    title = args.title or os.path.splitext(os.path.basename(audio))[0]
 
     print(f"[1/4] Analyzing audio: {audio}")
     analysis = analyze_audio(audio)
@@ -40,7 +53,8 @@ def main():
           f"duration={analysis.duration:.1f}s onsets={len(analysis.onset_times)}")
 
     print("[2/4] Generating charts (TempoSync + FootGraph)")
-    sim = generate.generate_simfile(audio, title=title, artist="AJR")
+    sim = generate.generate_simfile(audio, title=title, artist=args.artist,
+                                    difficulties=args.difficulties)
     out_dir = os.path.join("output", "modern")
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, f"{title}.sm")

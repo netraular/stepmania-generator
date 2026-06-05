@@ -42,7 +42,30 @@ for dance pads.
 *semi-automatic*: you must detect the BPM/downbeat yourself in ArrowVortex
 before it generates the steps. Use it when AutoStepper's timing is off.
 
-## Quick start (built-in generator)
+## Quick start (web app — recommended)
+
+The easiest way to use everything is the built-in web app. It takes a YouTube
+link, downloads the audio, runs **every available generator** (our TempoSync +
+FootGraph and AutoStepper), scores them side by side, and gives you the playable
+song folders to download.
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+.venv\Scripts\python.exe server.py
+# then open http://localhost:8000
+```
+
+Paste a YouTube URL, optionally set the title/artist and which difficulties to
+generate, and press **Generate & compare**. Each generator's charts are scored
+on the same objective metrics (timing sync, lane balance, crossovers, candles)
+so you can see which version plays better, then download the folder as a `.zip`.
+
+Outputs are written to `output/web/<title>/` with one playable subfolder per
+generator plus a `comparison.json`.
+
+## Quick start (built-in generator, CLI)
 
 ```powershell
 python -m venv .venv
@@ -104,6 +127,8 @@ The generated song folder appears under `output/`. Copy it into your StepMania
 ## Folder layout
 
 ```
+server.py                built-in web app (committed)
+web/                     web UI assets (committed)
 src/sm_generator/        built-in TempoSync + FootGraph generator (committed)
 scripts/                 helper scripts (committed)
 docs/                    method & validation notes (committed)
