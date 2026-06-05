@@ -57,6 +57,8 @@ class Simfile:
     title: str = ""
     artist: str = ""
     music: str = ""
+    banner: str = ""
+    background: str = ""
     offset: float = 0.0
     # list of (beat, bpm) pairs, sorted by beat.
     bpms: list[tuple[float, float]] = field(default_factory=lambda: [(0.0, 120.0)])
@@ -139,6 +141,10 @@ def parse_sm(text: str) -> Simfile:
             sim.artist = value
         elif tag == "MUSIC":
             sim.music = value
+        elif tag == "BANNER":
+            sim.banner = value
+        elif tag == "BACKGROUND":
+            sim.background = value
         elif tag == "OFFSET":
             try:
                 sim.offset = float(value)
@@ -196,6 +202,13 @@ def write_sm(sim: Simfile) -> str:
         f"#TITLE:{sim.title};",
         f"#ARTIST:{sim.artist};",
         f"#MUSIC:{sim.music};",
+    ]
+    # Optional artwork (e.g. a YouTube thumbnail used as banner + background).
+    if sim.banner:
+        out.append(f"#BANNER:{sim.banner};")
+    if sim.background:
+        out.append(f"#BACKGROUND:{sim.background};")
+    out += [
         f"#OFFSET:{sim.offset:.6f};",
         f"#BPMS:{_format_bpms(sim.bpms)};",
         f"#SAMPLESTART:{sim.sample_start:.3f};",

@@ -267,6 +267,45 @@ def download_audio(url: str, slug: str, songs_dir: str, progress=_noop) -> str:
     return audio_path
 
 
+_IMG_EXTS = (".png", ".jpg", ".jpeg", ".webp")
+
+
+def download_thumbnail(url: str, slug: str, songs_dir: str,
+                       progress=_noop) -> str | None:
+    """Download the video thumbnail as an image; return its path or None.
+
+    Used as the song's banner + background artwork. Prefers a jpg (converted
+    via ffmpeg when available, which StepMania always supports) but falls back
+    to whatever image yt-dlp wrote. Cached next to the audio as ``{slug}.*``.
+    """
+    cmd = _ytdlp_cmd()
+    if not cmd:
+        return None
+    # Return a cached image if we already have one for this slug.
+    for ext in _IMG_EXTS:
+        cached = os.path.join(songs_dir, f"{slug}{ext}")
+        if os.path.exists(cached):
+            return cached
+    os.makedirs(songs_dir, exist_ok=True)
+    out_tmpl = os.path.join(songs_dir, f"{slug}.%(ext)s")
+    try:
+        progress("Downloading thumbnail", 32)
+        subprocess.run(
+            cmd + ["--no-playlist", "--skip-download", "--write-thumbnail",
+                   "--convert-thumbnails", "jpg", "-o", out_tmpl, url],
+            check=True, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=60, env=_utf8_env(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log(f"download_thumbnail failed for {url!r}: {exc!r}")
+    # Pick the resulting image (prefer jpg/png over webp).
+    for ext in _IMG_EXTS:
+        path = os.path.join(songs_dir, f"{slug}{ext}")
+        if os.path.exists(path):
+            return path
+    return None
+
+
 def is_playlist_url(url: str) -> bool:
     """True if the URL points at a YouTube playlist (has a ``list=`` param)."""
     return "list=" in (url or "")
@@ -324,6 +363,24 @@ def fetch_playlist_entries(url: str) -> list[dict]:
     return entries
 
 
+def _place_artwork(image_path: str | None, folder: str, song_slug: str) -> str:
+    """Copy the song image into ``folder`` with an ASCII name; return its name.
+
+    Returns "" if there is no usable image. StepMania accepts the same file as
+    both banner and background and scales it, so one thumbnail covers both.
+    """
+    if not image_path or not os.path.exists(image_path):
+        return ""
+    ext = os.path.splitext(image_path)[1].lower() or ".jpg"
+    img_name = f"{song_slug}{ext}"
+    try:
+        shutil.copy2(image_path, os.path.join(folder, img_name))
+        return img_name
+    except Exception as exc:  # noqa: BLE001
+        _log(f"could not place artwork in {folder!r}: {exc!r}")
+        return ""
+
+
 def run_ours(
     audio_path: str,
     title: str,
@@ -332,6 +389,7 @@ def run_ours(
     analysis: TimingAnalysis,
     out_root: str,
     progress=_noop,
+    image_path: str | None = None,
 ) -> GeneratorResult:
     """Generate our charts into a playable folder and score them."""
     res = GeneratorResult(name="TempoSync + FootGraph")
@@ -355,6 +413,11 @@ def run_ours(
         music_name = f"{song_slug}{ext}"
         sim.music = music_name
         shutil.copy2(audio_path, os.path.join(folder, music_name))
+        # Use the video thumbnail as banner + background artwork.
+        img_name = _place_artwork(image_path, folder, song_slug)
+        if img_name:
+            sim.banner = img_name
+            sim.background = img_name
         sm_path = os.path.join(folder, f"{song_slug}.sm")
         write_sm_file(sim, sm_path)
 
@@ -375,6 +438,7 @@ def run_autostepper(
     out_root: str,
     analysis: TimingAnalysis,
     progress=_noop,
+    image_path: str | None = None,
 ) -> GeneratorResult:
     """Run AutoStepper (if installed) into a playable folder and score it."""
     res = GeneratorResult(name="AutoStepper")
@@ -424,6 +488,11 @@ def run_autostepper(
             # Rewrite the #MUSIC tag so the chart points at the copied audio.
             bsim = parse_sm_file(tmp_sm)
             bsim.music = music_name
+            # Use the video thumbnail as banner + background artwork.
+            img_name = _place_artwork(image_path, as_out, song_slug)
+            if img_name:
+                bsim.banner = img_name
+                bsim.background = img_name
             write_sm_file(bsim, sm_path)
 
         for ch in bsim.charts:
@@ -486,6 +555,8 @@ def _process_song(
     slug = slugify(title)
 
     audio_path = download_audio(url, slug, songs_dir, progress=progress)
+    # Grab the video thumbnail for banner/background artwork (best-effort).
+    image_path = download_thumbnail(url, slug, songs_dir, progress=progress)
 
     progress("Analyzing audio (BPM, onsets)", 35)
     analysis = analyze_audio(audio_path)
@@ -498,11 +569,13 @@ def _process_song(
     )
 
     result.generators.append(
-        run_ours(audio_path, title, artist, difficulties, analysis, out_root, progress)
+        run_ours(audio_path, title, artist, difficulties, analysis, out_root,
+                 progress, image_path=image_path)
     )
     if include_autostepper:
         result.generators.append(
-            run_autostepper(audio_path, title, out_root, analysis, progress)
+            run_autostepper(audio_path, title, out_root, analysis, progress,
+                            image_path=image_path)
         )
     # Pick up a manually-placed DDC export, if any.
     ddc = score_existing("DDC", os.path.join(out_root, "DDC", slug), analysis)
