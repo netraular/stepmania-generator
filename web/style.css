@@ -55,6 +55,26 @@ input[type="url"], input[type="text"] {
 
 input:focus { outline: 2px solid var(--accent); border-color: transparent; }
 
+.url-row { display: flex; gap: .5rem; margin-top: .4rem; }
+.url-row input { margin-top: 0; flex: 1; }
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+@media (max-width: 520px) { .grid-2 { grid-template-columns: 1fr; } }
+
+.hint {
+  display: block;
+  margin-top: .45rem;
+  font-size: .8rem;
+  color: var(--muted);
+  font-weight: 400;
+}
+.hint.ok { color: var(--accent-2); }
+.hint.err { color: var(--warn); }
+
 fieldset {
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -63,22 +83,54 @@ fieldset {
 }
 legend { color: var(--muted); font-size: .85rem; padding: 0 .4rem; }
 
-.chips { display: flex; flex-wrap: wrap; gap: .5rem; }
+.chips { display: flex; flex-wrap: wrap; gap: .55rem; }
 .chip {
+  position: relative;
   cursor: pointer;
   user-select: none;
-  padding: .4rem .8rem;
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  padding: .5rem .9rem .5rem .8rem;
   border-radius: 999px;
-  border: 1px solid var(--border);
+  border: 1.5px solid var(--border);
   background: var(--card-2);
-  font-size: .9rem;
+  color: var(--muted);
+  font-size: .92rem;
   font-weight: 600;
+  transition: all .15s ease;
 }
+.chip:hover { border-color: var(--accent); color: var(--fg); }
 .chip input { display: none; }
-.chip.active { background: var(--accent); border-color: var(--accent); color: #0c0f1c; }
+/* Tick mark shown only when active. */
+.chip::before {
+  content: "";
+  width: 15px; height: 15px;
+  border-radius: 50%;
+  border: 1.5px solid var(--muted);
+  display: inline-block;
+  flex: none;
+  transition: all .15s ease;
+}
+.chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0c0f1c;
+  box-shadow: 0 4px 14px rgba(108, 140, 255, .35);
+}
+.chip.active::before {
+  background: #0c0f1c;
+  border-color: #0c0f1c;
+  content: "\2713";
+  color: var(--accent);
+  font-size: 11px;
+  line-height: 13px;
+  text-align: center;
+  font-weight: 900;
+}
 
 .check { font-weight: 500; display: flex; align-items: center; gap: .55rem; }
-.check input { width: 18px; height: 18px; }
+.check input { width: 18px; height: 18px; accent-color: var(--accent); }
 
 button {
   cursor: pointer;
@@ -93,6 +145,18 @@ button {
   border-radius: 10px;
 }
 button:disabled { opacity: .55; cursor: progress; }
+
+.btn-secondary {
+  width: auto;
+  margin-top: 0;
+  padding: .7rem 1.1rem;
+  font-size: .95rem;
+  color: var(--fg);
+  background: var(--card-2);
+  border: 1px solid var(--border);
+}
+.btn-secondary:hover:not(:disabled) { border-color: var(--accent); }
+
 
 .bar {
   height: 12px;

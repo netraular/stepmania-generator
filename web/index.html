@@ -18,30 +18,32 @@
     <section class="card">
       <form id="gen-form">
         <label>YouTube URL
-          <input id="url" type="url" required
-                 placeholder="https://www.youtube.com/watch?v=..." />
+          <div class="url-row">
+            <input id="url" type="url" required
+                   placeholder="https://www.youtube.com/watch?v=..." />
+            <button id="fetch" type="button" class="btn-secondary">Fetch info</button>
+          </div>
+          <span id="fetch-msg" class="hint"></span>
         </label>
 
-        <div class="row">
-          <label>Title (optional &ndash; auto-detected from YouTube)
-            <input id="title" type="text" placeholder="e.g. Rabbit Hole" />
+        <div class="grid-2">
+          <label>Title
+            <input id="title" type="text" placeholder="auto-detected" />
           </label>
-        </div>
-
-        <div class="row">
-          <label>Artist (optional)
-            <input id="artist" type="text" placeholder="Unknown" />
+          <label>Artist
+            <input id="artist" type="text" placeholder="auto-detected" />
           </label>
         </div>
 
         <fieldset>
-          <legend>Difficulties (ours)</legend>
+          <legend>Difficulties to generate (ours)</legend>
           <div id="difficulties" class="chips"></div>
+          <span class="hint">Click to toggle. Highlighted = will be generated.</span>
         </fieldset>
 
         <label class="check">
           <input id="autostepper" type="checkbox" checked />
-          Also run AutoStepper for comparison
+          <span>Also run <strong>AutoStepper</strong> for comparison</span>
         </label>
 
         <button id="go" type="submit">Generate &amp; compare</button>

@@ -38,6 +38,46 @@ function selectedDifficulties() {
   );
 }
 
+let lastFetchedUrl = "";
+
+async function fetchMetadata(manual) {
+  const url = $("#url").value.trim();
+  const msg = $("#fetch-msg");
+  if (!url) {
+    if (manual) {
+      msg.textContent = "Enter a YouTube URL first.";
+      msg.className = "hint err";
+    }
+    return;
+  }
+  if (!manual && url === lastFetchedUrl) return;
+  lastFetchedUrl = url;
+
+  $("#fetch").disabled = true;
+  msg.textContent = "Fetching title & artist\u2026";
+  msg.className = "hint";
+  try {
+    const meta = await fetch(
+      "/api/metadata?url=" + encodeURIComponent(url)
+    ).then((r) => r.json());
+    if (meta.error) throw new Error(meta.error);
+    if (meta.title) $("#title").value = meta.title;
+    if (meta.artist) $("#artist").value = meta.artist;
+    if (meta.title || meta.artist) {
+      msg.textContent = "Detected \u2014 edit if needed.";
+      msg.className = "hint ok";
+    } else {
+      msg.textContent = "Couldn't auto-detect. Fill in manually.";
+      msg.className = "hint err";
+    }
+  } catch (e) {
+    msg.textContent = "Couldn't fetch info: " + e.message;
+    msg.className = "hint err";
+  } finally {
+    $("#fetch").disabled = false;
+  }
+}
+
 function setProgress(pct, msg) {
   $("#progress").classList.remove("hidden");
   $("#bar-fill").style.width = `${pct}%`;
@@ -158,5 +198,8 @@ $("#gen-form").addEventListener("submit", async (e) => {
     $("#go").disabled = false;
   }
 });
+
+$("#fetch").addEventListener("click", () => fetchMetadata(true));
+$("#url").addEventListener("blur", () => fetchMetadata(false));
 
 loadCapabilities();

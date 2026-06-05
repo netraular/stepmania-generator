@@ -45,6 +45,19 @@ def _find_exe(name: str) -> str | None:
     return shutil.which(name)
 
 
+def _utf8_env() -> dict:
+    """Environment that forces a child Python (yt-dlp) to emit UTF-8.
+
+    When yt-dlp's stdout is captured through a pipe on Windows it otherwise
+    falls back to the legacy code page and silently drops non-Latin characters
+    (e.g. Japanese song titles), so we pin UTF-8 here.
+    """
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    return env
+
+
 def autostepper_jar() -> str | None:
     jar = os.path.join(repo_root(), "tools", "AutoStepper", "AutoStepper.jar")
     return jar if os.path.exists(jar) else None
@@ -101,13 +114,66 @@ def fetch_title(url: str) -> str:
         out = subprocess.run(
             [yt, "--no-playlist", "--skip-download", "--print", "%(title)s", url],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=60, check=True,
+            timeout=60, check=True, env=_utf8_env(),
         )
         # Collapse any stray newlines/whitespace into a single clean line.
         title = " ".join((out.stdout or "").split())
         return title or "song"
     except Exception:
         return "song"
+
+
+def _clean_line(value: str) -> str:
+    return " ".join((value or "").split())
+
+
+def fetch_metadata(url: str) -> dict:
+    """Fetch title + artist from a YouTube URL without downloading.
+
+    Uses yt-dlp's music tags (`track`/`artist`) when available and falls back
+    to parsing a "Artist - Title" style video title. Returns a dict with
+    ``title`` and ``artist`` keys.
+    """
+    yt = _find_exe("yt-dlp")
+    if not yt:
+        return {"title": "", "artist": ""}
+    try:
+        out = subprocess.run(
+            [yt, "--no-playlist", "--skip-download",
+             "--print", "%(track)s\n%(artist)s\n%(title)s\n%(uploader)s", url],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=60, check=True, env=_utf8_env(),
+        )
+        lines = (out.stdout or "").splitlines()
+        # yt-dlp prints the literal "NA" for missing fields.
+        def field(i):
+            v = _clean_line(lines[i]) if i < len(lines) else ""
+            return "" if v.upper() == "NA" else v
+
+        track, artist, title, uploader = field(0), field(1), field(2), field(3)
+
+        song_title = track or title or "song"
+        song_artist = artist
+
+        # Fall back to splitting "Artist - Title" out of the video title.
+        if not song_artist and " - " in title:
+            left, right = title.split(" - ", 1)
+            song_artist = _clean_line(left)
+            if not track:
+                song_title = _clean_line(right)
+        if not song_artist:
+            song_artist = uploader
+
+        # Strip common YouTube noise from the title.
+        for junk in ("(Official Music Video)", "(Official Video)",
+                     "(Official Audio)", "(Lyric Video)", "(Audio)",
+                     "[Official Music Video]", "[Official Video]"):
+            song_title = song_title.replace(junk, "").replace(junk.lower(), "")
+        song_title = _clean_line(song_title)
+
+        return {"title": song_title or "song", "artist": song_artist or ""}
+    except Exception:
+        return {"title": "", "artist": ""}
 
 
 def download_audio(url: str, slug: str, songs_dir: str, progress=_noop) -> str:

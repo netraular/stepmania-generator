@@ -127,6 +127,14 @@ class Handler(BaseHTTPRequestHandler):
                 "difficulties": pipeline.footgraph.DIFFICULTY_ORDER,
             })
 
+        if route == "/api/metadata":
+            qs = parse_qs(parsed.query)
+            url = (qs.get("url") or [""])[0].strip()
+            if not url:
+                return self._send_json(400, {"error": "missing url"})
+            meta = pipeline.fetch_metadata(url)
+            return self._send_json(200, meta)
+
         if route == "/download":
             qs = parse_qs(parsed.query)
             rel = (qs.get("path") or [""])[0]
