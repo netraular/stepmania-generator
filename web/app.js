@@ -92,66 +92,191 @@ function fmt(v) {
   if (v === null || v === undefined) return "\u2013";
   return typeof v === "number" ? v : v;
 }
-
 function renderResults(result) {
   $("#results").classList.remove("hidden");
   $("#song-info").innerHTML =
-    `<strong>${result.title}</strong> &mdash; ${result.artist} &middot; ` +
-    `BPM ${result.bpm} &middot; ${result.duration}s`;
+    `<strong>${escapeHtml(result.title)}</strong> &mdash; ` +
+    `${escapeHtml(result.artist)} &middot; BPM ${result.bpm} &middot; ` +
+    `${result.duration}s`;
 
   const host = $("#generators");
   host.innerHTML = "";
 
-  result.generators.forEach((gen) => {
-    const div = document.createElement("div");
-    div.className = "gen";
-    const ok = !gen.error && gen.charts && gen.charts.length;
-    const badge = ok
-      ? `<span class="badge">${gen.charts.length} charts</span>`
-      : `<span class="badge err">${gen.error || "n/a"}</span>`;
-    div.innerHTML = `<h3>${gen.name} ${badge}</h3>`;
+  const working = result.generators.filter(
+    (g) => !g.error && g.charts && g.charts.length
+  );
 
-    if (ok) {
-      div.appendChild(buildTable(gen.charts));
-      if (gen.folder) {
-        const rel = gen.folder.split(/output[\\/]+web[\\/]+/).pop().replace(/\\/g, "/");
-        const a = document.createElement("a");
-        a.className = "dl";
-        a.href = `/download_zip?dir=${encodeURIComponent(rel)}`;
-        a.textContent = "Download playable folder (.zip)";
-        div.appendChild(a);
-      }
-    }
-    host.appendChild(div);
+  host.appendChild(buildSummary(working));
+
+  result.generators.forEach((gen) => {
+    host.appendChild(buildGeneratorCard(gen));
   });
+
+  host.appendChild(buildLegend());
+}
+
+// Average a numeric metric across a generator's charts.
+function avg(charts, key) {
+  const vals = charts.map((c) => c[key]).filter((v) => typeof v === "number");
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+}
+
+function syncLabel(ms) {
+  if (ms == null) return { text: "\u2013", cls: "" };
+  if (ms <= 60) return { text: "Excellent", cls: "q-good" };
+  if (ms <= 100) return { text: "Good", cls: "q-ok" };
+  return { text: "Loose", cls: "q-warn" };
+}
+
+function comfortLabel(candlePerMin, crossover) {
+  const score = (candlePerMin || 0) + (crossover || 0) * 100;
+  if (score <= 1) return { text: "Very comfortable", cls: "q-good" };
+  if (score <= 6) return { text: "Comfortable", cls: "q-ok" };
+  return { text: "Some awkward steps", cls: "q-warn" };
+}
+
+// A plain-language comparison of the working generators.
+function buildSummary(working) {
+  const box = document.createElement("div");
+  box.className = "summary";
+  if (!working.length) {
+    box.innerHTML = "<p class='muted'>No generator produced a chart.</p>";
+    return box;
+  }
+
+  // Find the best (lowest) average sync.
+  let best = null;
+  working.forEach((g) => {
+    const s = avg(g.charts, "onset_align_ms");
+    if (s != null && (best == null || s < best.sync)) {
+      best = { name: g.name, sync: s };
+    }
+  });
+
+  let html = "<h3>In short</h3><ul class='plain'>";
+  working.forEach((g) => {
+    const sync = avg(g.charts, "onset_align_ms");
+    const sl = syncLabel(sync);
+    const cl = comfortLabel(
+      avg(g.charts, "candle_rate"),
+      avg(g.charts, "crossover_rate")
+    );
+    const star = best && g.name === best.name ? " \u2b50" : "";
+    html +=
+      `<li><strong>${escapeHtml(g.name)}</strong>${star}: ` +
+      `${g.charts.length} difficult${g.charts.length === 1 ? "y" : "ies"}, ` +
+      `timing <span class='${sl.cls}'>${sl.text.toLowerCase()}</span> ` +
+      `(~${sync == null ? "?" : Math.round(sync)} ms), ` +
+      `<span class='${cl.cls}'>${cl.text.toLowerCase()}</span>.</li>`;
+  });
+  html += "</ul>";
+  if (best) {
+    html +=
+      `<p class='muted'>\u2b50 Best timing sync: <strong>` +
+      `${escapeHtml(best.name)}</strong> (lower ms = more on the beat).</p>`;
+  }
+  box.innerHTML = html;
+  return box;
+}
+
+function buildGeneratorCard(gen) {
+  const div = document.createElement("div");
+  div.className = "gen";
+  const ok = !gen.error && gen.charts && gen.charts.length;
+
+  if (!ok) {
+    div.innerHTML =
+      `<h3>${escapeHtml(gen.name)} ` +
+      `<span class="badge err">couldn't generate</span></h3>` +
+      `<p class="muted">${escapeHtml(gen.error || "not available")}</p>`;
+    return div;
+  }
+
+  div.innerHTML =
+    `<h3>${escapeHtml(gen.name)} ` +
+    `<span class="badge">${gen.charts.length} charts</span></h3>`;
+  div.appendChild(buildTable(gen.charts));
+
+  if (gen.folder) {
+    const rel = gen.folder
+      .split(/output[\\/]+web[\\/]+/)
+      .pop()
+      .replace(/\\/g, "/");
+    const a = document.createElement("a");
+    a.className = "dl";
+    a.href = `/download_zip?dir=${encodeURIComponent(rel)}`;
+    a.textContent = "\u2b07 Download playable folder (.zip)";
+    div.appendChild(a);
+  }
+  return div;
 }
 
 function buildTable(charts) {
   const cols = [
-    ["difficulty", "Difficulty"],
-    ["nps", "NPS"],
-    ["onset_align_ms", "Sync (ms)"],
-    ["onset_recall", "Recall"],
-    ["lane_imbalance", "Lane imb."],
-    ["crossover_rate", "Crossover"],
-    ["candle_rate", "Candle/min"],
+    ["difficulty", "Difficulty", null],
+    ["nps", "Steps/sec", null],
+    ["onset_align_ms", "Sync (ms)", "low"],
+    ["onset_recall", "Beats hit", "high"],
+    ["lane_imbalance", "Lane balance", "low"],
+    ["candle_rate", "Awkward/min", "low"],
   ];
-  const table = document.createElement("table");
-  const thead = document.createElement("thead");
-  thead.innerHTML =
-    "<tr>" + cols.map(([, h]) => `<th>${h}</th>`).join("") + "</tr>";
-  table.appendChild(thead);
+  // Best value per column for highlighting.
+  const bestOf = {};
+  cols.forEach(([k, , dir]) => {
+    if (!dir) return;
+    const vals = charts.map((c) => c[k]).filter((v) => typeof v === "number");
+    if (!vals.length) return;
+    bestOf[k] = dir === "low" ? Math.min(...vals) : Math.max(...vals);
+  });
 
+  const table = document.createElement("table");
+  table.innerHTML =
+    "<thead><tr>" +
+    cols.map(([, h]) => `<th>${h}</th>`).join("") +
+    "</tr></thead>";
   const tbody = document.createElement("tbody");
   charts.forEach((c) => {
     const tr = document.createElement("tr");
     tr.innerHTML = cols
-      .map(([k]) => `<td>${fmt(c[k])}</td>`)
+      .map(([k, , dir]) => {
+        let v = c[k];
+        if (k === "onset_recall" && typeof v === "number") {
+          v = Math.round(v * 100) + "%";
+        } else if (k === "onset_align_ms" && typeof v === "number") {
+          v = Math.round(v);
+        }
+        const good =
+          dir && typeof c[k] === "number" && c[k] === bestOf[k]
+            ? " class='good'"
+            : "";
+        return `<td${good}>${fmt(v)}</td>`;
+      })
       .join("");
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
   return table;
+}
+
+function buildLegend() {
+  const d = document.createElement("div");
+  d.className = "legend muted";
+  d.innerHTML =
+    "<strong>What the columns mean:</strong> " +
+    "<em>Steps/sec</em> = how busy the chart is. " +
+    "<em>Sync</em> = how close steps land to the music (lower is better). " +
+    "<em>Beats hit</em> = share of detected beats that got a step (higher is better). " +
+    "<em>Lane balance</em> = how evenly the 4 arrows are used (lower is better). " +
+    "<em>Awkward/min</em> = uncomfortable moves per minute (lower is better). " +
+    "Green = best value in that column.";
+  return d;
+}
+
+function escapeHtml(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 async function poll(jobId) {

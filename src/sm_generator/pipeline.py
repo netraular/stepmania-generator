@@ -250,32 +250,45 @@ def run_autostepper(
         progress("Running AutoStepper", 75)
         as_out = os.path.join(out_root, "AutoStepper")
         os.makedirs(as_out, exist_ok=True)
-        with tempfile.TemporaryDirectory() as in_dir:
-            shutil.copy2(audio_path, os.path.join(in_dir, os.path.basename(audio_path)))
+        # AutoStepper is a Java app that mangles non-ASCII paths on Windows
+        # (it reports success but silently writes nowhere). So we run it inside
+        # ASCII-only temp dirs and move the result into place with Python.
+        with tempfile.TemporaryDirectory() as in_dir, \
+                tempfile.TemporaryDirectory() as tmp_out:
+            ascii_name = "track.mp3"
+            shutil.copy2(audio_path, os.path.join(in_dir, ascii_name))
             duration = int(analysis.duration) + 2
             subprocess.run(
                 [java, "-jar", os.path.basename(jar),
-                 f"input={in_dir}", f"output={as_out}",
+                 f"input={in_dir}", f"output={tmp_out}",
                  f"duration={duration}", "hard=true"],
                 cwd=os.path.dirname(jar), check=True,
                 capture_output=True, text=True, timeout=600,
             )
-        # AutoStepper writes <mp3name>_dir/<mp3name>.sm
-        sm_path = None
-        for root, _dirs, files in os.walk(as_out):
-            for f in files:
-                if f.endswith(".sm"):
-                    sm_path = os.path.join(root, f)
-                    break
-        if not sm_path:
-            res.error = "AutoStepper produced no .sm"
-            return res
-        bsim = parse_sm_file(sm_path)
+            # Find the .sm AutoStepper produced in the temp output.
+            tmp_sm = None
+            for root, _dirs, files in os.walk(tmp_out):
+                for f in files:
+                    if f.endswith(".sm"):
+                        tmp_sm = os.path.join(root, f)
+                        break
+            if not tmp_sm:
+                res.error = "produced no .sm output"
+                return res
+            # Copy the .sm next to the audio in the final (Unicode-safe) folder.
+            music_name = os.path.basename(audio_path)
+            shutil.copy2(audio_path, os.path.join(as_out, music_name))
+            sm_path = os.path.join(as_out, music_name + ".sm")
+            # Rewrite the #MUSIC tag so the chart points at the copied audio.
+            bsim = parse_sm_file(tmp_sm)
+            bsim.music = music_name
+            write_sm_file(bsim, sm_path)
+
         for ch in bsim.charts:
             m = metrics.compute_metrics(bsim, ch, onset_times=analysis.onset_times)
             res.charts.append(m.as_dict())
         res.sm_path = sm_path
-        res.folder = os.path.dirname(sm_path)
+        res.folder = as_out
     except subprocess.TimeoutExpired:
         res.error = "AutoStepper timed out"
     except Exception as exc:  # noqa: BLE001

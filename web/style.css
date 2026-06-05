@@ -203,5 +203,29 @@ td.good { color: var(--accent-2); font-weight: 700; }
 }
 .dl:hover { border-color: var(--accent); }
 
+.summary {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem 1.2rem;
+  margin-bottom: 1.25rem;
+}
+.summary h3 { margin: 0 0 .6rem; }
+ul.plain { margin: 0 0 .6rem; padding-left: 1.1rem; }
+ul.plain li { margin: .25rem 0; }
+
+.q-good { color: var(--accent-2); font-weight: 700; }
+.q-ok { color: var(--accent); font-weight: 700; }
+.q-warn { color: var(--warn); font-weight: 700; }
+
+.legend {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  font-size: .82rem;
+  line-height: 1.7;
+}
+.legend em { color: var(--fg); font-style: normal; font-weight: 600; }
+
 footer { margin-top: 1rem; }
 code { background: var(--card-2); padding: .1rem .35rem; border-radius: 5px; }
