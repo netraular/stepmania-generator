@@ -66,6 +66,10 @@ async function fetchMetadata(manual) {
     if (meta.title || meta.artist) {
       msg.textContent = "Detected \u2014 edit if needed.";
       msg.className = "hint ok";
+    } else if (meta.error) {
+      msg.textContent = "Couldn't auto-detect: " + meta.error +
+        ". Fill in manually.";
+      msg.className = "hint err";
     } else {
       msg.textContent = "Couldn't auto-detect. Fill in manually.";
       msg.className = "hint err";

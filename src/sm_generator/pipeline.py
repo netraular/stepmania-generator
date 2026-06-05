@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, field, asdict
 
@@ -43,6 +44,32 @@ def slugify(name: str) -> str:
 
 def _find_exe(name: str) -> str | None:
     return shutil.which(name)
+
+
+def _log(msg: str) -> None:
+    """Print a diagnostic line to stderr so the server console shows it."""
+    print(f"[pipeline] {msg}", file=sys.stderr, flush=True)
+
+
+def _ytdlp_cmd() -> list[str] | None:
+    """Return the command prefix to invoke yt-dlp, or None if unavailable.
+
+    Prefers a standalone ``yt-dlp`` executable on PATH, but falls back to
+    ``python -m yt_dlp`` using the *current* interpreter. This is what makes it
+    work on machines where yt-dlp was ``pip install``ed into the environment but
+    its Scripts directory is not on PATH (the usual cause of silent
+    "couldn't detect" failures on a fresh PC).
+    """
+    exe = shutil.which("yt-dlp")
+    if exe:
+        return [exe]
+    try:
+        import importlib.util
+        if importlib.util.find_spec("yt_dlp") is not None:
+            return [sys.executable, "-m", "yt_dlp"]
+    except Exception:  # noqa: BLE001
+        pass
+    return None
 
 
 def _utf8_env() -> dict:
@@ -107,19 +134,26 @@ def _noop(_msg: str, _pct: float = 0.0) -> None:
 
 def fetch_title(url: str) -> str:
     """Ask yt-dlp for the video title without downloading."""
-    yt = _find_exe("yt-dlp")
-    if not yt:
+    cmd = _ytdlp_cmd()
+    if not cmd:
+        _log("yt-dlp not found (not on PATH and not importable as a module); "
+             "install it with `pip install yt-dlp`")
         return "song"
     try:
         out = subprocess.run(
-            [yt, "--no-playlist", "--skip-download", "--print", "%(title)s", url],
+            cmd + ["--no-playlist", "--skip-download", "--print", "%(title)s", url],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=60, check=True, env=_utf8_env(),
         )
         # Collapse any stray newlines/whitespace into a single clean line.
         title = " ".join((out.stdout or "").split())
         return title or "song"
-    except Exception:
+    except subprocess.CalledProcessError as exc:
+        _log(f"fetch_title failed for {url!r}: yt-dlp exited {exc.returncode}: "
+             f"{(exc.stderr or '').strip()[:500]}")
+        return "song"
+    except Exception as exc:  # noqa: BLE001
+        _log(f"fetch_title failed for {url!r}: {exc!r}")
         return "song"
 
 
@@ -134,12 +168,14 @@ def fetch_metadata(url: str) -> dict:
     to parsing a "Artist - Title" style video title. Returns a dict with
     ``title`` and ``artist`` keys.
     """
-    yt = _find_exe("yt-dlp")
-    if not yt:
-        return {"title": "", "artist": ""}
+    cmd = _ytdlp_cmd()
+    if not cmd:
+        _log("yt-dlp not found (not on PATH and not importable as a module); "
+             "install it with `pip install yt-dlp`")
+        return {"title": "", "artist": "", "error": "yt-dlp not installed"}
     try:
         out = subprocess.run(
-            [yt, "--no-playlist", "--skip-download",
+            cmd + ["--no-playlist", "--skip-download",
              "--print", "%(track)s\n%(artist)s\n%(title)s\n%(uploader)s", url],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=60, check=True, env=_utf8_env(),
@@ -172,15 +208,28 @@ def fetch_metadata(url: str) -> dict:
         song_title = _clean_line(song_title)
 
         return {"title": song_title or "song", "artist": song_artist or ""}
-    except Exception:
-        return {"title": "", "artist": ""}
+    except subprocess.CalledProcessError as exc:
+        reason = (exc.stderr or "").strip()
+        _log(f"fetch_metadata failed for {url!r}: yt-dlp exited "
+             f"{exc.returncode}: {reason[:500]}")
+        return {"title": "", "artist": "",
+                "error": reason.splitlines()[-1] if reason else "yt-dlp error"}
+    except subprocess.TimeoutExpired:
+        _log(f"fetch_metadata timed out for {url!r}")
+        return {"title": "", "artist": "", "error": "yt-dlp timed out"}
+    except Exception as exc:  # noqa: BLE001
+        _log(f"fetch_metadata failed for {url!r}: {exc!r}")
+        return {"title": "", "artist": "", "error": str(exc)}
 
 
 def download_audio(url: str, slug: str, songs_dir: str, progress=_noop) -> str:
     """Download a single track as mp3; return its path."""
-    yt = _find_exe("yt-dlp")
-    if not yt:
-        raise RuntimeError("yt-dlp not found on PATH")
+    cmd = _ytdlp_cmd()
+    if not cmd:
+        raise RuntimeError(
+            "yt-dlp not found. Install it with `pip install yt-dlp` (or put "
+            "yt-dlp on PATH)."
+        )
     os.makedirs(songs_dir, exist_ok=True)
     out_tmpl = os.path.join(songs_dir, f"{slug}.%(ext)s")
     audio_path = os.path.join(songs_dir, f"{slug}.mp3")
@@ -189,7 +238,7 @@ def download_audio(url: str, slug: str, songs_dir: str, progress=_noop) -> str:
         return audio_path
     progress("Downloading audio from YouTube", 10)
     subprocess.run(
-        [yt, "--no-playlist", "-x", "--audio-format", "mp3",
+        cmd + ["--no-playlist", "-x", "--audio-format", "mp3",
          "--audio-quality", "0", "-o", out_tmpl, url],
         check=True, capture_output=True, text=True,
     )
