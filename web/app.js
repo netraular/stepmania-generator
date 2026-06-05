@@ -179,22 +179,39 @@ function buildSummary(working) {
   return box;
 }
 
+// Short description shown under each generator's heading.
+function genDescription(name) {
+  if (/temposync|footgraph/i.test(name)) {
+    return "Our custom generator \u2014 reads the real audio (BPM, beats, " +
+      "onsets) and picks foot-friendly steps for a dance pad.";
+  }
+  if (/autostepper/i.test(name)) {
+    return "Open-source baseline (Java). Fully automatic; included only " +
+      "as a comparison reference.";
+  }
+  return "";
+}
+
 function buildGeneratorCard(gen) {
   const div = document.createElement("div");
   div.className = "gen";
   const ok = !gen.error && gen.charts && gen.charts.length;
+  const desc = genDescription(gen.name);
+  const descHtml = desc ? `<p class="gen-desc">${escapeHtml(desc)}</p>` : "";
 
   if (!ok) {
     div.innerHTML =
       `<h3>${escapeHtml(gen.name)} ` +
       `<span class="badge err">couldn't generate</span></h3>` +
+      descHtml +
       `<p class="muted">${escapeHtml(gen.error || "not available")}</p>`;
     return div;
   }
 
   div.innerHTML =
     `<h3>${escapeHtml(gen.name)} ` +
-    `<span class="badge">${gen.charts.length} charts</span></h3>`;
+    `<span class="badge">${gen.charts.length} charts</span></h3>` +
+    descHtml;
   div.appendChild(buildTable(gen.charts));
 
   if (gen.folder) {
