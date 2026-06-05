@@ -1,0 +1,166 @@
+"""End-to-end generation: audio file -> dance-single Simfile.
+
+Combines TempoSync (real BPM/offset + quantized onsets) with FootGraph
+(lowest-cost foot placement) to produce one chart per requested difficulty.
+"""
+
+from __future__ import annotations
+
+import os
+
+from . import footgraph
+from .footgraph import DifficultyConfig, FootPlacer
+from .simfile_io import Chart, Simfile
+from .timing import (
+    QuantizedNote,
+    TimingAnalysis,
+    analyze_audio,
+    quantize,
+    thin_to_density,
+)
+
+ROWS_PER_MEASURE = 48  # divisible by 4,8,12,16,24 subdivisions
+
+
+def _select_jumps(notes: list[QuantizedNote], cfg: DifficultyConfig) -> set[int]:
+    """Pick note indices to render as jumps (strong, well-spaced onsets)."""
+    if cfg.jump_rate <= 0 or len(notes) < 3:
+        return set()
+    budget = int(cfg.jump_rate * len(notes))
+    if budget <= 0:
+        return set()
+    # Rank by strength but require breathing room around the note.
+    candidates = []
+    for i, n in enumerate(notes):
+        prev_dt = n.time - notes[i - 1].time if i > 0 else 1.0
+        next_dt = notes[i + 1].time - n.time if i < len(notes) - 1 else 1.0
+        if min(prev_dt, next_dt) >= 0.25:  # not inside a fast stream
+            candidates.append((n.strength, i))
+    candidates.sort(reverse=True)
+    return {i for _, i in candidates[:budget]}
+
+
+def generate_chart(
+    analysis: TimingAnalysis,
+    cfg: DifficultyConfig,
+    seed: int = 0,
+) -> Chart:
+    """Build a single difficulty chart from a timing analysis."""
+    notes = quantize(analysis, cfg.allowed_quants)
+    notes = thin_to_density(notes, cfg.target_nps, analysis.duration)
+    if not notes:
+        return Chart(difficulty=cfg.name, meter=cfg.meter,
+                     description="sm_generator", measures=[])
+
+    jump_idx = _select_jumps(notes, cfg)
+    events = [(n.time, 2 if i in jump_idx else 1) for i, n in enumerate(notes)]
+
+    placer = FootPlacer(cfg, seed=seed)
+    rows = placer.place(events)
+
+    # Lay rows onto a measure grid.
+    n_measures = int(notes[-1].beat // 4) + 1
+    measures: list[list[str]] = [
+        ["0000"] * ROWS_PER_MEASURE for _ in range(n_measures)
+    ]
+    for n, row in zip(notes, rows):
+        mi = int(n.beat // 4)
+        pos_in_measure = n.beat - mi * 4.0           # 0..4 beats
+        ri = int(round(pos_in_measure / 4.0 * ROWS_PER_MEASURE)) % ROWS_PER_MEASURE
+        measures[mi][ri] = row
+
+    measures = _apply_holds(measures, cfg)
+    measures = [_trim_measure(m) for m in measures]
+    return Chart(
+        difficulty=cfg.name,
+        meter=cfg.meter,
+        description="sm_generator",
+        measures=measures,
+    )
+
+
+def _apply_holds(measures: list[list[str]], cfg: DifficultyConfig):
+    """Turn a fraction of well-isolated taps into short holds.
+
+    A tap becomes a hold head (2) if the same panel is free for a while after
+    it; a tail (3) is written shortly before the next event on that panel.
+    """
+    if cfg.hold_rate <= 0:
+        return measures
+
+    # Flatten to a global row timeline for easy lookahead.
+    total_rows = len(measures) * ROWS_PER_MEASURE
+
+    def get(idx):
+        return measures[idx // ROWS_PER_MEASURE][idx % ROWS_PER_MEASURE]
+
+    def setc(idx, panel, ch):
+        m = measures[idx // ROWS_PER_MEASURE]
+        r = list(m[idx % ROWS_PER_MEASURE])
+        r[panel] = ch
+        m[idx % ROWS_PER_MEASURE] = "".join(r)
+
+    import random
+    rng = random.Random(1234)
+    for idx in range(total_rows):
+        row = get(idx)
+        for panel in range(4):
+            if row[panel] != "1":
+                continue
+            if rng.random() > cfg.hold_rate:
+                continue
+            # Find the next event on this panel.
+            nxt = None
+            for j in range(idx + 1, min(idx + ROWS_PER_MEASURE, total_rows)):
+                if get(j)[panel] != "0":
+                    nxt = j
+                    break
+            span = (nxt - idx) if nxt else ROWS_PER_MEASURE // 2
+            if span >= 6:  # only hold if there is real room
+                tail = idx + span - 2
+                if tail > idx and tail < total_rows and get(tail)[panel] == "0":
+                    setc(idx, panel, "2")
+                    setc(tail, panel, "3")
+    return measures
+
+
+def _trim_measure(measure: list[str]) -> list[str]:
+    """Reduce a 48-row measure to the coarsest resolution that preserves notes."""
+    for res in (4, 8, 12, 16, 24, 48):
+        step = ROWS_PER_MEASURE // res
+        ok = all(
+            measure[i] == "0000"
+            for i in range(ROWS_PER_MEASURE)
+            if i % step != 0
+        )
+        if ok:
+            return [measure[i] for i in range(0, ROWS_PER_MEASURE, step)]
+    return measure
+
+
+def generate_simfile(
+    audio_path: str,
+    title: str,
+    artist: str,
+    difficulties: list[str] | None = None,
+    max_seconds: float | None = None,
+) -> Simfile:
+    """Analyze audio once and generate charts for each requested difficulty."""
+    if difficulties is None:
+        difficulties = footgraph.DIFFICULTY_ORDER
+
+    analysis = analyze_audio(audio_path, max_seconds=max_seconds)
+
+    sim = Simfile(
+        title=title,
+        artist=artist,
+        music=os.path.basename(audio_path),
+        offset=-analysis.offset,
+        bpms=[(0.0, round(analysis.bpm, 3))],
+        sample_start=min(30.0, analysis.duration / 3),
+        sample_length=20.0,
+    )
+    for i, name in enumerate(difficulties):
+        cfg = footgraph.make_difficulty(name)
+        sim.charts.append(generate_chart(analysis, cfg, seed=i))
+    return sim

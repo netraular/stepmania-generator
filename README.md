@@ -22,16 +22,40 @@ but it's a solid starting point you can refine in an editor like
 
 | Generator | Language | Mode | Pad-friendly | Tested here |
 | --- | --- | --- | --- | --- |
+| **TempoSync + FootGraph** (this repo) | Python | Fully automatic | Yes (foot-aware) | ✅ Built-in, validated |
 | [AutoStepper](https://github.com/phr00t/AutoStepper) (phr00t) | Java | Fully automatic | Yes (built for pads) | ✅ Works end-to-end |
 | [StepGenerator](https://github.com/Johell1NS/StepGenerator) (Johell1NS) | Python | Semi-automatic (needs ArrowVortex + manual BPM) | Yes (dance-single) | ⚠️ Requires manual GUI step |
+| [DDC](https://ddc.chrisdonahue.com/) (Dance Dance Convolution) | Python/TF | Fully automatic (web demo) | Weak (no foot model, fixed 125 BPM) | ✅ Baseline only |
 
-**AutoStepper** is the recommended default here: it runs fully unattended,
+This repo ships its **own** fully-automatic generator,
+**TempoSync + FootGraph** (see [docs/METHOD.md](docs/METHOD.md)). It syncs to the
+song's *real* BPM and chooses arrows with a foot-aware lowest-cost search, so the
+result is more in-time and more comfortable on a pad than the alternatives. On
+the test song it aligns ~2× better than AutoStepper, keeps a near-perfect 25%
+per-panel balance, and produces essentially zero crossovers/candles.
+
+**AutoStepper** remains a good Java alternative: it runs fully unattended,
 generates all difficulty levels with holds/jumps, and is explicitly optimized
 for dance pads.
 
 **StepGenerator** is more modern and can give nicer results, but it is
 *semi-automatic*: you must detect the BPM/downbeat yourself in ArrowVortex
 before it generates the steps. Use it when AutoStepper's timing is off.
+
+## Quick start (built-in generator)
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# drop an MP3 into songs/, then:
+.venv\Scripts\python.exe scripts\generate_modern.py "songs\Your Song - Artist.mp3"
+```
+
+Charts are written to `output/modern/<title>.sm` (all 5 difficulties) along with
+a `metrics.json` comparing them to any baselines in `output/`. See
+[docs/METHOD.md](docs/METHOD.md) for the method and validation results.
+
 
 ## Requirements
 
@@ -80,7 +104,9 @@ The generated song folder appears under `output/`. Copy it into your StepMania
 ## Folder layout
 
 ```
+src/sm_generator/        built-in TempoSync + FootGraph generator (committed)
 scripts/                 helper scripts (committed)
+docs/                    method & validation notes (committed)
 tools/                   downloaded generators        (git-ignored)
 songs/                   input audio                  (git-ignored)
 output/                  generated charts             (git-ignored)
