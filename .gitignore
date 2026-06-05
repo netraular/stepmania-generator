@@ -1,0 +1,24 @@
+# Downloaded third-party generators (fetched via scripts, not committed)
+tools/
+
+# Input audio and generated charts
+songs/
+output/
+
+# Audio files anywhere
+*.mp3
+*.wav
+*.webm
+*.m4a
+*.ogg
+*.flac
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
