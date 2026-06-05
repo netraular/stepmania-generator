@@ -96,27 +96,101 @@ function fmt(v) {
   if (v === null || v === undefined) return "\u2013";
   return typeof v === "number" ? v : v;
 }
-function renderResults(result) {
+function renderResults(job) {
   $("#results").classList.remove("hidden");
-  $("#song-info").innerHTML =
-    `<strong>${escapeHtml(result.title)}</strong> &mdash; ` +
-    `${escapeHtml(result.artist)} &middot; BPM ${result.bpm} &middot; ` +
-    `${result.duration}s`;
+
+  // The server always returns {is_playlist, title, songs:[...]}; tolerate an
+  // older single-PipelineResult shape just in case.
+  const songs = job.songs || [job];
+  const isPlaylist = !!job.is_playlist && songs.length > 1;
 
   const host = $("#generators");
   host.innerHTML = "";
 
-  const working = result.generators.filter(
-    (g) => !g.error && g.charts && g.charts.length
-  );
-
-  host.appendChild(buildSummary(working));
-
-  result.generators.forEach((gen) => {
-    host.appendChild(buildGeneratorCard(gen));
-  });
+  if (isPlaylist) {
+    $("#song-info").innerHTML =
+      `<strong>${escapeHtml(job.title)}</strong> &mdash; playlist &middot; ` +
+      `${songs.length} songs`;
+    host.appendChild(buildPackDownloads(songs));
+    songs.forEach((s, i) => host.appendChild(buildSongSection(s, i)));
+  } else {
+    const song = songs[0];
+    $("#song-info").innerHTML =
+      `<strong>${escapeHtml(song.title)}</strong> &mdash; ` +
+      `${escapeHtml(song.artist)} &middot; BPM ${song.bpm} &middot; ` +
+      `${song.duration}s`;
+    renderSong(host, song);
+  }
 
   host.appendChild(buildLegend());
+}
+
+// Render one song's summary + generator cards (single-song view).
+function renderSong(host, song) {
+  const working = (song.generators || []).filter(
+    (g) => !g.error && g.charts && g.charts.length
+  );
+  host.appendChild(buildSummary(working));
+  (song.generators || []).forEach((gen) => {
+    host.appendChild(buildGeneratorCard(gen));
+  });
+}
+
+// One section per song inside a playlist (metrics only; downloads are the
+// per-generator packs shown at the top).
+function buildSongSection(song, idx) {
+  const box = document.createElement("div");
+  box.className = "song-section";
+  if (song.error) {
+    box.innerHTML =
+      `<h3 class="song-title">${idx + 1}. ${escapeHtml(song.title)}</h3>` +
+      `<p class="muted">Failed: ${escapeHtml(song.error)}</p>`;
+    return box;
+  }
+  const head = document.createElement("h3");
+  head.className = "song-title";
+  head.innerHTML =
+    `${idx + 1}. ${escapeHtml(song.title)} ` +
+    `<span class="muted">&middot; BPM ${song.bpm} &middot; ${song.duration}s</span>`;
+  box.appendChild(head);
+  (song.generators || []).forEach((gen) => {
+    box.appendChild(buildGeneratorCard(gen, true));
+  });
+  return box;
+}
+
+// One download per generator pack (each pack holds every song's folder).
+function buildPackDownloads(songs) {
+  const box = document.createElement("div");
+  box.className = "summary";
+  box.innerHTML =
+    "<h3>Download packs</h3><p class='muted'>Each .zip is a ready " +
+    "StepMania pack \u2014 unzip it into your <code>Songs</code> folder and " +
+    "every track shows up in its own folder.</p>";
+
+  const seen = new Set();
+  const ul = document.createElement("ul");
+  ul.className = "plain";
+  songs.forEach((s) =>
+    (s.generators || []).forEach((g) => {
+      if (!g.folder) return;
+      const rel = g.folder
+        .split(/output[\\/]+web[\\/]+/)
+        .pop()
+        .replace(/\\/g, "/");
+      if (seen.has(rel)) return;
+      seen.add(rel);
+      const li = document.createElement("li");
+      const a = document.createElement("a");
+      a.className = "dl";
+      a.href = `/download_zip?dir=${encodeURIComponent(rel)}`;
+      a.textContent = `\u2b07 ${g.name} \u2014 all ${songs.length} songs (.zip)`;
+      li.appendChild(a);
+      ul.appendChild(li);
+    })
+  );
+  box.appendChild(ul);
+  return box;
 }
 
 // Average a numeric metric across a generator's charts.
@@ -196,7 +270,7 @@ function genDescription(name) {
   return "";
 }
 
-function buildGeneratorCard(gen) {
+function buildGeneratorCard(gen, hideDownload) {
   const div = document.createElement("div");
   div.className = "gen";
   const ok = !gen.error && gen.charts && gen.charts.length;
@@ -218,7 +292,7 @@ function buildGeneratorCard(gen) {
     descHtml;
   div.appendChild(buildTable(gen.charts));
 
-  if (gen.folder) {
+  if (gen.folder && !hideDownload) {
     const rel = gen.folder
       .split(/output[\\/]+web[\\/]+/)
       .pop()
@@ -226,7 +300,7 @@ function buildGeneratorCard(gen) {
     const a = document.createElement("a");
     a.className = "dl";
     a.href = `/download_zip?dir=${encodeURIComponent(rel)}`;
-    a.textContent = "\u2b07 Download playable folder (.zip)";
+    a.textContent = "\u2b07 Download StepMania pack (.zip)";
     div.appendChild(a);
   }
   return div;
@@ -328,6 +402,7 @@ $("#gen-form").addEventListener("submit", async (e) => {
     artist: $("#artist").value.trim(),
     difficulties: selectedDifficulties(),
     autostepper: $("#autostepper").checked,
+    playlist: $("#playlist").checked,
   };
 
   try {

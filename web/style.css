@@ -215,6 +215,14 @@ td.good { color: var(--accent-2); font-weight: 700; }
 ul.plain { margin: 0 0 .6rem; padding-left: 1.1rem; }
 ul.plain li { margin: .25rem 0; }
 
+.song-section {
+  border-top: 2px solid var(--border);
+  padding-top: 1rem;
+  margin-top: 1.25rem;
+}
+.song-title { margin: 0 0 .75rem; }
+.song-title .muted { font-weight: 400; font-size: .85rem; }
+
 .q-good { color: var(--accent-2); font-weight: 700; }
 .q-ok { color: var(--accent); font-weight: 700; }
 .q-warn { color: var(--warn); font-weight: 700; }

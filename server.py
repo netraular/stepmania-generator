@@ -51,18 +51,20 @@ def _get_job(job_id: str) -> dict | None:
         return dict(job) if job else None
 
 
-def _run_job(job_id: str, url: str, title, artist: str, difficulties, autostepper: bool):
+def _run_job(job_id: str, url: str, title, artist: str, difficulties,
+             autostepper: bool, playlist: bool):
     def progress(msg: str, pct: float = 0.0):
         _set_job(job_id, status="running", message=msg, pct=pct)
 
     try:
-        result = pipeline.run_pipeline(
+        result = pipeline.run_job(
             url=url, title=title or None, artist=artist or "Unknown",
             difficulties=difficulties or None,
-            include_autostepper=autostepper, progress=progress,
+            include_autostepper=autostepper, playlist=playlist,
+            progress=progress,
         )
         _set_job(job_id, status="done", message="Done", pct=100,
-                 result=result.to_dict())
+                 result=result)
     except Exception as exc:  # noqa: BLE001
         _set_job(job_id, status="error", message=str(exc), pct=0)
 
@@ -194,12 +196,14 @@ class Handler(BaseHTTPRequestHandler):
         artist = (payload.get("artist") or "Unknown").strip()
         difficulties = payload.get("difficulties") or None
         autostepper = bool(payload.get("autostepper", True))
+        playlist = bool(payload.get("playlist", False))
 
         job_id = uuid.uuid4().hex
         _set_job(job_id, status="queued", message="Queued", pct=0)
         t = threading.Thread(
             target=_run_job,
-            args=(job_id, url, title, artist, difficulties, autostepper),
+            args=(job_id, url, title, artist, difficulties, autostepper,
+                  playlist),
             daemon=True,
         )
         t.start()

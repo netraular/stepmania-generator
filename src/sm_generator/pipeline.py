@@ -247,6 +247,63 @@ def download_audio(url: str, slug: str, songs_dir: str, progress=_noop) -> str:
     return audio_path
 
 
+def is_playlist_url(url: str) -> bool:
+    """True if the URL points at a YouTube playlist (has a ``list=`` param)."""
+    return "list=" in (url or "")
+
+
+def fetch_playlist_title(url: str) -> str:
+    """Return the playlist's title (for the pack/output folder name)."""
+    cmd = _ytdlp_cmd()
+    if not cmd:
+        return "Playlist"
+    try:
+        out = subprocess.run(
+            cmd + ["--flat-playlist", "--playlist-items", "1",
+                   "--print", "%(playlist_title)s", url],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=60, check=True, env=_utf8_env(),
+        )
+        title = " ".join((out.stdout or "").split())
+        return title if title and title.upper() != "NA" else "Playlist"
+    except Exception as exc:  # noqa: BLE001
+        _log(f"fetch_playlist_title failed for {url!r}: {exc!r}")
+        return "Playlist"
+
+
+def fetch_playlist_entries(url: str) -> list[dict]:
+    """List a playlist's videos as ``[{"url", "title"}, ...]`` (no download)."""
+    cmd = _ytdlp_cmd()
+    if not cmd:
+        _log("yt-dlp not found; cannot enumerate playlist")
+        return []
+    try:
+        out = subprocess.run(
+            cmd + ["--flat-playlist", "--print", "%(id)s\t%(title)s", url],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=120, check=True, env=_utf8_env(),
+        )
+    except subprocess.CalledProcessError as exc:
+        _log(f"fetch_playlist_entries failed for {url!r}: yt-dlp exited "
+             f"{exc.returncode}: {(exc.stderr or '').strip()[:500]}")
+        return []
+    except Exception as exc:  # noqa: BLE001
+        _log(f"fetch_playlist_entries failed for {url!r}: {exc!r}")
+        return []
+
+    entries: list[dict] = []
+    for line in (out.stdout or "").splitlines():
+        vid, _, vtitle = line.partition("\t")
+        vid = vid.strip()
+        if not vid or vid.upper() == "NA":
+            continue
+        entries.append({
+            "url": f"https://www.youtube.com/watch?v={vid}",
+            "title": _clean_line(vtitle),
+        })
+    return entries
+
+
 def run_ours(
     audio_path: str,
     title: str,
@@ -264,19 +321,26 @@ def run_ours(
             audio_path, title=title, artist=artist, difficulties=difficulties,
             analysis=analysis,
         )
-        folder = os.path.join(out_root, "Ours")
+        # StepMania requires Songs/<Group>/<Song>/file.sm (two levels of
+        # nesting). We make the generator folder a "pack" (the group) and give
+        # each song its own subfolder, so dropping the pack into Songs/ is
+        # detected and a playlist becomes one pack with many song folders.
+        pack = os.path.join(out_root, "Ours")
+        song_slug = slugify(title)
+        folder = os.path.join(pack, song_slug)
         os.makedirs(folder, exist_ok=True)
         music_name = os.path.basename(audio_path)
         sim.music = music_name
         shutil.copy2(audio_path, os.path.join(folder, music_name))
-        sm_path = os.path.join(folder, f"{slugify(title)}.sm")
+        sm_path = os.path.join(folder, f"{song_slug}.sm")
         write_sm_file(sim, sm_path)
 
         for ch in sim.charts:
             m = metrics.compute_metrics(sim, ch, onset_times=analysis.onset_times)
             res.charts.append(m.as_dict())
         res.sm_path = sm_path
-        res.folder = folder
+        # Expose the *pack* so downloads bundle a StepMania-ready group folder.
+        res.folder = pack
     except Exception as exc:  # noqa: BLE001
         res.error = str(exc)
     return res
@@ -284,6 +348,7 @@ def run_ours(
 
 def run_autostepper(
     audio_path: str,
+    title: str,
     out_root: str,
     analysis: TimingAnalysis,
     progress=_noop,
@@ -298,7 +363,10 @@ def run_autostepper(
         return res
     try:
         progress("Running AutoStepper", 75)
-        as_out = os.path.join(out_root, "AutoStepper")
+        # Same StepMania pack layout as run_ours: <pack>/<song>/file.sm.
+        pack = os.path.join(out_root, "AutoStepper")
+        song_slug = slugify(title)
+        as_out = os.path.join(pack, song_slug)
         os.makedirs(as_out, exist_ok=True)
         # AutoStepper is a Java app that mangles non-ASCII paths on Windows
         # (it reports success but silently writes nowhere). So we run it inside
@@ -338,7 +406,7 @@ def run_autostepper(
             m = metrics.compute_metrics(bsim, ch, onset_times=analysis.onset_times)
             res.charts.append(m.as_dict())
         res.sm_path = sm_path
-        res.folder = as_out
+        res.folder = pack
     except subprocess.TimeoutExpired:
         res.error = "AutoStepper timed out"
     except Exception as exc:  # noqa: BLE001
@@ -374,23 +442,21 @@ def score_existing(name: str, folder: str, analysis: TimingAnalysis) -> Generato
 # Orchestration
 # --------------------------------------------------------------------------
 
-def run_pipeline(
+def _process_song(
     url: str,
-    title: str | None = None,
-    artist: str = "Unknown",
-    difficulties: list[str] | None = None,
-    include_autostepper: bool = True,
+    title: str | None,
+    artist: str,
+    difficulties: list[str],
+    include_autostepper: bool,
+    songs_dir: str,
+    out_root: str,
     progress=_noop,
 ) -> PipelineResult:
-    """Full pipeline for one YouTube URL."""
-    root = repo_root()
-    songs_dir = os.path.join(root, "songs")
-    output_base = os.path.join(root, "output", "web")
+    """Download + analyze one track and run every generator into ``out_root``.
 
-    if difficulties is None:
-        difficulties = ["Easy", "Medium", "Hard"]
-
-    progress("Fetching track info", 5)
+    ``out_root`` is the shared job folder; each generator writes a
+    StepMania pack (``<out_root>/Ours`` etc.) with a per-song subfolder.
+    """
     if not title:
         title = fetch_title(url)
     slug = slugify(title)
@@ -400,9 +466,7 @@ def run_pipeline(
     progress("Analyzing audio (BPM, onsets)", 35)
     analysis = analyze_audio(audio_path)
 
-    out_root = os.path.join(output_base, slug)
     os.makedirs(out_root, exist_ok=True)
-
     result = PipelineResult(
         title=title, artist=artist, slug=slug, audio_path=audio_path,
         bpm=round(analysis.bpm, 2), offset=round(analysis.offset, 3),
@@ -414,12 +478,42 @@ def run_pipeline(
     )
     if include_autostepper:
         result.generators.append(
-            run_autostepper(audio_path, out_root, analysis, progress)
+            run_autostepper(audio_path, title, out_root, analysis, progress)
         )
     # Pick up a manually-placed DDC export, if any.
-    ddc = score_existing("DDC", os.path.join(out_root, "DDC"), analysis)
+    ddc = score_existing("DDC", os.path.join(out_root, "DDC", slug), analysis)
     if ddc.available and ddc.charts:
         result.generators.append(ddc)
+
+    return result
+
+
+def run_pipeline(
+    url: str,
+    title: str | None = None,
+    artist: str = "Unknown",
+    difficulties: list[str] | None = None,
+    include_autostepper: bool = True,
+    progress=_noop,
+) -> PipelineResult:
+    """Full pipeline for one YouTube URL (single song)."""
+    root = repo_root()
+    songs_dir = os.path.join(root, "songs")
+    output_base = os.path.join(root, "output", "web")
+
+    if difficulties is None:
+        difficulties = ["Easy", "Medium", "Hard"]
+
+    progress("Fetching track info", 5)
+    if not title:
+        title = fetch_title(url)
+    slug = slugify(title)
+    out_root = os.path.join(output_base, slug)
+
+    result = _process_song(
+        url, title, artist, difficulties, include_autostepper,
+        songs_dir, out_root, progress,
+    )
 
     progress("Writing comparison", 95)
     with open(os.path.join(out_root, "comparison.json"), "w", encoding="utf-8") as fh:
@@ -427,3 +521,92 @@ def run_pipeline(
 
     progress("Done", 100)
     return result
+
+
+def run_job(
+    url: str,
+    title: str | None = None,
+    artist: str = "Unknown",
+    difficulties: list[str] | None = None,
+    include_autostepper: bool = True,
+    playlist: bool = False,
+    progress=_noop,
+) -> dict:
+    """Dispatch to single-song or whole-playlist processing.
+
+    Always returns ``{is_playlist, title, output_dir, songs: [...]}`` so the
+    web UI can render one or many songs uniformly.
+    """
+    root = repo_root()
+    songs_dir = os.path.join(root, "songs")
+    output_base = os.path.join(root, "output", "web")
+
+    if difficulties is None:
+        difficulties = ["Easy", "Medium", "Hard"]
+
+    # Single song -------------------------------------------------------------
+    if not (playlist and is_playlist_url(url)):
+        result = run_pipeline(
+            url, title, artist, difficulties, include_autostepper, progress,
+        )
+        return {
+            "is_playlist": False,
+            "title": result.title,
+            "output_dir": result.output_dir,
+            "songs": [result.to_dict()],
+        }
+
+    # Whole playlist ----------------------------------------------------------
+    progress("Reading playlist", 3)
+    pl_title = fetch_playlist_title(url)
+    entries = fetch_playlist_entries(url)
+    if not entries:
+        raise RuntimeError(
+            "Couldn't read the playlist (yt-dlp returned no entries). "
+            "Check the URL and that it is a public playlist."
+        )
+
+    pl_slug = slugify(pl_title)
+    out_root = os.path.join(output_base, pl_slug)
+    os.makedirs(out_root, exist_ok=True)
+
+    songs: list[dict] = []
+    n = len(entries)
+    for i, entry in enumerate(entries):
+        base = 5 + int(90 * i / n)
+        span = max(1, int(90 / n))
+
+        def _p(msg: str, pct: float = 0.0, _b=base, _s=span, _i=i, _n=n) -> None:
+            scaled = _b + (_s * (pct / 100.0))
+            progress(f"[{_i + 1}/{_n}] {msg}", min(95.0, scaled))
+
+        try:
+            result = _process_song(
+                entry["url"], entry.get("title") or None, artist, difficulties,
+                include_autostepper, songs_dir, out_root, _p,
+            )
+            songs.append(result.to_dict())
+        except Exception as exc:  # noqa: BLE001
+            _log(f"playlist entry {i + 1}/{n} failed "
+                 f"({entry.get('url')!r}): {exc!r}")
+            songs.append({
+                "title": entry.get("title") or "Unknown",
+                "artist": artist, "slug": "", "audio_path": "",
+                "bpm": 0, "offset": 0, "duration": 0,
+                "output_dir": out_root, "generators": [],
+                "error": str(exc),
+            })
+
+    job = {
+        "is_playlist": True,
+        "title": pl_title,
+        "output_dir": out_root,
+        "songs": songs,
+    }
+    progress("Writing comparison", 95)
+    with open(os.path.join(out_root, "comparison.json"), "w", encoding="utf-8") as fh:
+        json.dump(job, fh, indent=2)
+
+    progress("Done", 100)
+    return job
+

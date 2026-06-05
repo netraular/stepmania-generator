@@ -62,8 +62,21 @@ generate, and press **Generate & compare**. Each generator's charts are scored
 on the same objective metrics (timing sync, lane balance, crossovers, candles)
 so you can see which version plays better, then download the folder as a `.zip`.
 
-Outputs are written to `output/web/<title>/` with one playable subfolder per
-generator plus a `comparison.json`.
+Tick **"URL is a playlist"** to generate every song in a YouTube playlist in one
+go; each track gets its own folder inside the downloadable pack.
+
+Outputs are written to `output/web/<title>/` as a ready **StepMania pack**: a
+group folder per generator (`Ours/`, `AutoStepper/`) with one
+`<Song Title>/song.sm` subfolder per song, plus a `comparison.json`.
+
+### Installing the generated songs
+
+StepMania / OutFox only detects songs nested two levels deep
+(`Songs/<Group>/<Song>/file.sm`). The downloaded `.zip` already has that layout,
+so just unzip it **directly into your `Songs` folder** — you'll get
+`Songs/Ours/<Song Title>/` and it shows up in the song wheel. (The charts are
+plain `.sm` files; you do **not** need `.ssc`.)
+
 
 ## Quick start (built-in generator, CLI)
 
