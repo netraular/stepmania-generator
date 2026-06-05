@@ -64,6 +64,15 @@ _SPEED_HI = 0.24     # seconds between feet where speed cost begins
 _SPEED_LO = 0.1765   # seconds between feet where speed cost is maxed
 _SPEED_MIN_DIST = 1.0  # moves shorter than this are exempt (allows candles)
 
+# Same-foot moves (jacks, double-steps, candles) are comfortable when slow but
+# become physically infeasible in a fast stream, where one foot has no time to
+# repeat or sweep across the pad. We scale those penalties up as the gap between
+# consecutive notes shrinks, so the DP is forced to alternate feet cleanly at
+# speed (the single biggest factor in whether a chart is playable with feet).
+_FAST_HI = 0.30        # seconds between notes; above this, no extra scaling
+_FAST_LO = 0.145       # at/below this (~fast 16th stream), full scaling
+_FAST_MULT = 7.0       # max multiplier applied to same-foot penalties
+
 
 def _ramp(value: float, hi: float, lo: float) -> float:
     """Return 0 at >=hi, 1 at <=lo, linear in between (hi > lo)."""
@@ -110,13 +119,28 @@ class FootPlacer:
         cur_panel = prev.left if foot == "L" else prev.right
         other_panel = prev.right if foot == "L" else prev.left
 
+        # How fast this move is relative to a comfortable repeat. 1.0 when the
+        # notes are well spaced, rising toward _FAST_MULT in a fast stream. We
+        # apply it to same-foot patterns so they stay cheap when slow (a lone
+        # jack is fine) but become prohibitive at speed (a jacked 16th stream is
+        # not playable with feet).
+        fast = _ramp(dt, _FAST_HI, _FAST_LO)
+        samefoot_factor = 1.0 + (_FAST_MULT - 1.0) * fast
+
         # Double-step: same foot moves twice in a row to a different panel.
         if prev.last == foot and cur_panel is not None and cur_panel != new_panel:
-            cost += cfg.double_step_penalty
+            cost += cfg.double_step_penalty * samefoot_factor
 
-        # Jack: same foot hits the same arrow again (collapses to one lane).
-        if prev.last == foot and cur_panel is not None and cur_panel == new_panel:
-            cost += cfg.jack_penalty
+        # Jack / footswitch: the new note reuses the *previous note's* panel.
+        # With the same foot that's a jack; with the other foot it's a
+        # footswitch. Both are fine slow but awkward fast, and both look
+        # identical in the .sm (which stores panels, not feet), so penalize any
+        # same-arrow repeat by tempo regardless of which foot is used. This is
+        # what stops fast streams from collapsing into an unplayable jack.
+        if prev.last is not None:
+            last_note_panel = prev.left if prev.last == "L" else prev.right
+            if last_note_panel is not None and new_panel == last_note_panel:
+                cost += cfg.jack_penalty * samefoot_factor
 
         # Static foot: a foot that does not move encourages lane collapse even
         # when feet alternate; nudge each foot to roam its comfortable panels.
@@ -140,12 +164,16 @@ class FootPlacer:
             if dist > _DIST_MIN:
                 cost += 6.0 * _ramp(_DIST_MAX - (dist - _DIST_MIN),
                                     _DIST_MAX, _DIST_MIN)
-            # Speed tightening: penalize fast *and* far moves.
+            # Speed tightening: penalize fast *and* far moves. A foot that has to
+            # cover real ground in little time is the other main source of
+            # unplayable patterns, so this grows steeply with how fast the move
+            # is and how far it travels.
             if dist > _SPEED_MIN_DIST and dt > 0:
-                cost += 8.0 * _ramp(dt, _SPEED_HI, _SPEED_LO) * (dist - _SPEED_MIN_DIST)
-            # Candle: same foot sweeps U<->D.
+                cost += 12.0 * _ramp(dt, _SPEED_HI, _SPEED_LO) * (dist - _SPEED_MIN_DIST)
+            # Candle: same foot sweeps U<->D. A slow candle is a fun accent; a
+            # fast one is a stretch you can't hit, so scale it with tempo too.
             if geo.is_candle(cur_panel, new_panel):
-                cost += cfg.candle_penalty
+                cost += cfg.candle_penalty * samefoot_factor
 
         # Facing: discourage ending in a crossed/twisted stance.
         nl = new_panel if foot == "L" else prev.left
