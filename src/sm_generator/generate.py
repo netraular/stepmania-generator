@@ -8,18 +8,34 @@ from __future__ import annotations
 
 import os
 
-from . import footgraph
+from . import density, footgraph
 from .footgraph import DifficultyConfig, FootPlacer
 from .simfile_io import Chart, Simfile
 from .timing import (
     QuantizedNote,
     TimingAnalysis,
     analyze_audio,
-    quantize,
-    thin_to_density,
 )
 
 ROWS_PER_MEASURE = 48  # divisible by 4,8,12,16,24 subdivisions
+
+# Default density strategy and the set of named, comparable generator versions.
+# See density.py for what each strategy does. Keeping them all lets us A/B-test
+# and ship whichever scores best while preserving the others as alternatives.
+#
+# v2 (adaptive) is the default: it grades density like the games do (comparable
+# to AutoStepper) while keeping our sync in the "good" range and zero awkward
+# steps. v3 (energy) grades even more aggressively (streams in loud sections,
+# higher beat recall) at the cost of looser sync; v1 keeps max sync but cannot
+# grade density on calm songs (the original flat-NPS bug).
+DEFAULT_STRATEGY = "adaptive"
+VARIANTS: dict[str, tuple[str, str]] = {
+    # id -> (display name, density strategy)
+    "v1-onset": ("TempoSync v1 (onset-thin)", "subtractive"),
+    "v2-grid": ("TempoSync v2 (adaptive grid)", "adaptive"),
+    "v3-energy": ("TempoSync v3 (energy-aware)", "energy"),
+}
+DEFAULT_VARIANT = "v2-grid"
 
 
 def _select_jumps(notes: list[QuantizedNote], cfg: DifficultyConfig) -> set[int]:
@@ -44,10 +60,10 @@ def generate_chart(
     analysis: TimingAnalysis,
     cfg: DifficultyConfig,
     seed: int = 0,
+    strategy: str = DEFAULT_STRATEGY,
 ) -> Chart:
     """Build a single difficulty chart from a timing analysis."""
-    notes = quantize(analysis, cfg.allowed_quants)
-    notes = thin_to_density(notes, cfg.target_nps, analysis.duration)
+    notes = density.build_notes(analysis, cfg, strategy=strategy)
     if not notes:
         return Chart(difficulty=cfg.name, meter=cfg.meter,
                      description="sm_generator", measures=[])
@@ -144,12 +160,15 @@ def generate_simfile(
     artist: str,
     difficulties: list[str] | None = None,
     max_seconds: float | None = None,
+    strategy: str = DEFAULT_STRATEGY,
+    analysis: TimingAnalysis | None = None,
 ) -> Simfile:
     """Analyze audio once and generate charts for each requested difficulty."""
     if difficulties is None:
         difficulties = footgraph.DIFFICULTY_ORDER
 
-    analysis = analyze_audio(audio_path, max_seconds=max_seconds)
+    if analysis is None:
+        analysis = analyze_audio(audio_path, max_seconds=max_seconds)
 
     sim = Simfile(
         title=title,
@@ -162,5 +181,5 @@ def generate_simfile(
     )
     for i, name in enumerate(difficulties):
         cfg = footgraph.make_difficulty(name)
-        sim.charts.append(generate_chart(analysis, cfg, seed=i))
+        sim.charts.append(generate_chart(analysis, cfg, seed=i, strategy=strategy))
     return sim

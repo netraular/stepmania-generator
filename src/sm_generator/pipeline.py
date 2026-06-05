@@ -212,7 +212,8 @@ def run_ours(
     try:
         progress("Generating our charts", 55)
         sim = generate.generate_simfile(
-            audio_path, title=title, artist=artist, difficulties=difficulties
+            audio_path, title=title, artist=artist, difficulties=difficulties,
+            analysis=analysis,
         )
         folder = os.path.join(out_root, "Ours")
         os.makedirs(folder, exist_ok=True)

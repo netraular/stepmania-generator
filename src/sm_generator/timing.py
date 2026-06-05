@@ -27,6 +27,11 @@ class TimingAnalysis:
     duration: float
     onset_times: np.ndarray  # seconds
     onset_strengths: np.ndarray
+    # Full onset-strength envelope and its time axis (seconds). Additive density
+    # strategies sample this to score arbitrary musical grid positions by energy.
+    onset_env: np.ndarray | None = None
+    onset_env_times: np.ndarray | None = None
+    beat_times: np.ndarray | None = None  # detected beat grid (seconds)
 
 
 def analyze_audio(path: str, max_seconds: float | None = None) -> TimingAnalysis:
@@ -54,6 +59,7 @@ def analyze_audio(path: str, max_seconds: float | None = None) -> TimingAnalysis
         onset_envelope=onset_env, sr=sr, backtrack=True, units="frames"
     )
     onset_times = librosa.frames_to_time(onset_frames, sr=sr)
+    onset_env_times = librosa.times_like(onset_env, sr=sr)
     # Sample the strength envelope at each onset.
     strengths = onset_env[np.clip(onset_frames, 0, len(onset_env) - 1)]
     if strengths.size:
@@ -65,6 +71,9 @@ def analyze_audio(path: str, max_seconds: float | None = None) -> TimingAnalysis
         duration=duration,
         onset_times=np.asarray(onset_times, dtype=float),
         onset_strengths=np.asarray(strengths, dtype=float),
+        onset_env=np.asarray(onset_env, dtype=float),
+        onset_env_times=np.asarray(onset_env_times, dtype=float),
+        beat_times=np.asarray(beats, dtype=float),
     )
 
 
