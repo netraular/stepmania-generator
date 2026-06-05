@@ -30,21 +30,31 @@ The biggest weakness of DDC's public demo is that it charts everything on a
   (4th → 8th → 12th → 16th → 24th) whose snap error is within tolerance, gated
   by the difficulty's allowed subdivisions. Coarse-first snapping keeps easy
   charts on clean beats and only uses fine subdivisions when the music demands.
-- **Density control**: notes are graded to a per-difficulty target NPS. Three
+- **Density control**: notes are graded to a per-difficulty target NPS. Four
   interchangeable strategies are available (see `density.py`) so versions can be
   compared (`scripts/compare_versions.py`):
   - `subtractive` (v1) — quantize onsets and **thin** the weakest to target.
     Cannot exceed the detected onset count, so on calmer songs Medium/Hard/
     Challenge all hit the same ceiling and flatten to one density (the original
     grading bug).
-  - `adaptive` (v2, **default**) — keep the onsets as sync **anchors**, then
-    **add** notes on musical subdivisions weighted by audio energy until each
-    difficulty reaches its target. Grades density like the games do while
-    keeping sync good and zero awkward steps.
+  - `adaptive` (v2) — keep the onsets as sync **anchors**, then **add** notes on
+    musical subdivisions weighted by audio energy until each difficulty reaches
+    its *fixed* target. Grades density like the games do while keeping sync good
+    and zero awkward steps.
   - `energy` (v3) — like adaptive, but the **local** target follows the song's
     energy envelope (streams in loud sections, rests in calm ones) with the
-    average preserved. Highest beat recall and most musical; slightly looser
-    sync because fills sit between detected onsets.
+    average preserved. Highest beat recall; slightly looser sync because fills
+    sit between detected onsets.
+  - `musical` (v4, **default**) — two changes over `energy`. (1) The target is
+    **song-adaptive**: the fixed NPS is only a guideline, scaled toward the
+    song's own natural onset density (`adaptive_target_nps`), so a calm song is
+    charted sparser and an intense one denser instead of being forced to a
+    constant — the per-difficulty ordering is preserved because every difficulty
+    is scaled by the same factor. (2) Fills are added in **coherent metric
+    layers** (downbeats → 8ths → 16ths, strongest first within a layer) instead
+    of scattered high-energy points, so streams land on steady musical positions
+    and feel intentional. Validated: a calm 75 BPM song grades ~30% sparser per
+    difficulty than a busy 126 BPM one, with zero candles and improved sync.
 
 ## 2. FootGraph (step selection)
 

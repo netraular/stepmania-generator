@@ -8,18 +8,25 @@ same ceiling and produces an identical, flat chart (e.g. 2.602 NPS for all
 three). Real games grade difficulty by *adding* notes on musical subdivisions,
 not just by removing them.
 
-This module exposes three interchangeable, comparable strategies so different
-ideas can be A/B-tested and kept as versions:
+This module exposes interchangeable, comparable strategies so different ideas
+can be A/B-tested and kept as versions:
 
   * ``subtractive`` (v1) - original behaviour. Quantize onsets, thin to target.
         Cannot exceed the detected onset count, so calm songs flatten out.
   * ``adaptive``    (v2) - onset *anchors* (which carry the sync) plus a musical
         grid-fill weighted by audio energy, so every difficulty actually reaches
-        its target density while still landing notes where the music is loudest.
+        its *fixed* target density while still landing notes where the music is
+        loudest.
   * ``energy``      (v3) - like adaptive, but the *local* target follows the
         song's energy envelope: streams build up in loud sections (choruses) and
-        thin out in calm ones, while the average density still matches the
-        difficulty. This is the most musical / best-graded option.
+        thin out in calm ones, while the average still matches the fixed target.
+  * ``musical``     (v4) - the recommended default. Two changes over ``energy``:
+        (1) the per-difficulty target is **song-adaptive**: the fixed NPS is only
+        a guideline and is scaled by the song's own natural density, so a calm
+        song is charted sparser and an intense one denser instead of being forced
+        to a constant; (2) fills are added in **coherent metric layers**
+        (downbeats -> 8ths -> 16ths) instead of scattered high-energy points, so
+        streams feel intentional rather than randomly syncopated.
 
 All strategies return ``list[QuantizedNote]`` sorted by beat, ready for FootGraph.
 """
@@ -33,7 +40,16 @@ import numpy as np
 from .footgraph import DifficultyConfig
 from .timing import QuantizedNote, TimingAnalysis, quantize, thin_to_density
 
-STRATEGIES: tuple[str, ...] = ("subtractive", "adaptive", "energy")
+STRATEGIES: tuple[str, ...] = ("subtractive", "adaptive", "energy", "musical")
+
+# Song-adaptive targeting. The fixed per-difficulty NPS is treated as a guideline
+# for a "typical" song whose natural onset density is REFERENCE_NPS; the actual
+# target is scaled toward the song's own density so calm songs relax and busy
+# songs intensify. BLEND in [0,1] controls how much the song matters (0 = fully
+# fixed, 1 = fully song-relative). The factor is clamped to avoid extremes.
+REFERENCE_NPS = 3.5
+DEFAULT_SONG_BLEND = 0.75
+_FACTOR_MIN, _FACTOR_MAX = 0.6, 1.6
 
 
 # --------------------------------------------------------------------------
@@ -54,6 +70,33 @@ def _sample_env(analysis: TimingAnalysis, times: np.ndarray) -> np.ndarray:
 def _grid_rank(quant: int) -> float:
     """Musical weight of a subdivision: coarser positions feel stronger."""
     return {4: 1.0, 8: 0.7, 12: 0.55, 16: 0.45, 24: 0.30}.get(quant, 0.4)
+
+
+def intrinsic_nps(analysis: TimingAnalysis) -> float:
+    """The song's natural note density: detected onsets per second."""
+    if analysis.duration <= 0:
+        return 0.0
+    return len(analysis.onset_times) / analysis.duration
+
+
+def adaptive_target_nps(
+    analysis: TimingAnalysis,
+    cfg: DifficultyConfig,
+    blend: float = DEFAULT_SONG_BLEND,
+) -> float:
+    """Scale the difficulty's fixed target toward the song's own density.
+
+    A calm song (few onsets) pulls the target down; a busy song pushes it up.
+    The fixed ``cfg.target_nps`` is kept as a guideline and the per-difficulty
+    ordering is preserved because every difficulty is scaled by the same factor.
+    """
+    song = intrinsic_nps(analysis)
+    if song <= 0:
+        return cfg.target_nps
+    factor = song / REFERENCE_NPS
+    factor = min(max(factor, _FACTOR_MIN), _FACTOR_MAX)
+    return cfg.target_nps * (factor ** blend)
+
 
 
 def _grid_candidates(
@@ -197,6 +240,80 @@ def _energy(
     return out
 
 
+def _musical(
+    analysis: TimingAnalysis,
+    cfg: DifficultyConfig,
+    song_blend: float = DEFAULT_SONG_BLEND,
+    lo: float = 0.50,
+    hi: float = 1.65,
+    window_beats: float = 4.0,
+    min_fill_energy: float = 0.04,
+) -> list[QuantizedNote]:
+    """Song-adaptive target + energy windows + coherent layered fills.
+
+    Differs from ``_energy`` in two ways: the overall target follows the song's
+    natural density (``adaptive_target_nps``) instead of a fixed value, and fills
+    inside each window are added in coherent metric layers (anchors, then coarser
+    subdivisions before finer ones, strongest first within a layer) so streams
+    land on steady musical positions rather than scattered syncopations.
+    """
+    duration = analysis.duration
+    beat_period = 60.0 / analysis.bpm
+    total_beats = duration / beat_period
+    target_nps = adaptive_target_nps(analysis, cfg, song_blend)
+    target_total = target_nps * duration
+    if target_total <= 0:
+        return quantize(analysis, cfg.allowed_quants)
+
+    anchors = quantize(analysis, cfg.allowed_quants)
+    occupied = {round(n.beat, 3) for n in anchors}
+    pool = list(anchors)
+    for c in _grid_candidates(analysis, cfg):
+        if round(c.beat, 3) not in occupied:
+            pool.append(c)
+
+    nwin = max(1, int(math.ceil(total_beats / window_beats)))
+    buckets: list[list[QuantizedNote]] = [[] for _ in range(nwin)]
+    for n in pool:
+        wi = min(nwin - 1, int(n.beat // window_beats))
+        buckets[wi].append(n)
+
+    raw = np.array(
+        [sum(x.strength for x in b) / len(b) if b else 0.0 for b in buckets]
+    )
+    rmax = float(raw.max()) if raw.size else 0.0
+    enorm = raw / rmax if rmax > 0 else raw
+    scale = lo + (hi - lo) * enorm
+
+    win_dur = window_beats * beat_period
+    win_durs = np.full(nwin, win_dur, dtype=float)
+    win_durs[-1] = max(1e-3, duration - win_dur * (nwin - 1))
+
+    denom = float(np.sum(scale * win_durs))
+    base = target_total / denom if denom > 0 else 0.0
+
+    out: list[QuantizedNote] = []
+    for i, bucket in enumerate(buckets):
+        local_target = int(round(base * scale[i] * win_durs[i]))
+        if local_target <= 0 or not bucket:
+            continue
+        # Coherent layering: anchors first (sync), then coarser subdivisions
+        # before finer ones, strongest first within each layer.
+        ordered = sorted(
+            bucket,
+            key=lambda n: (
+                round(n.beat, 3) not in occupied,  # anchors (False) first
+                n.quant,                            # 4th -> 8th -> 16th
+                -n.strength,                        # loudest first in a layer
+            ),
+        )
+        for n in ordered[:local_target]:
+            if round(n.beat, 3) in occupied or n.strength >= min_fill_energy:
+                out.append(n)
+    out.sort(key=lambda n: n.beat)
+    return out
+
+
 # --------------------------------------------------------------------------
 # Public entry point
 # --------------------------------------------------------------------------
@@ -205,13 +322,14 @@ _DISPATCH = {
     "subtractive": _subtractive,
     "adaptive": _adaptive,
     "energy": _energy,
+    "musical": _musical,
 }
 
 
 def build_notes(
     analysis: TimingAnalysis,
     cfg: DifficultyConfig,
-    strategy: str = "energy",
+    strategy: str = "musical",
 ) -> list[QuantizedNote]:
     """Build the note list for one difficulty using the chosen strategy."""
     try:

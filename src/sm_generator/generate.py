@@ -23,19 +23,19 @@ ROWS_PER_MEASURE = 48  # divisible by 4,8,12,16,24 subdivisions
 # See density.py for what each strategy does. Keeping them all lets us A/B-test
 # and ship whichever scores best while preserving the others as alternatives.
 #
-# v2 (adaptive) is the default: it grades density like the games do (comparable
-# to AutoStepper) while keeping our sync in the "good" range and zero awkward
-# steps. v3 (energy) grades even more aggressively (streams in loud sections,
-# higher beat recall) at the cost of looser sync; v1 keeps max sync but cannot
-# grade density on calm songs (the original flat-NPS bug).
-DEFAULT_STRATEGY = "adaptive"
+# v4 (musical) is the default: song-adaptive target density (calm songs charted
+# sparser, busy ones denser, instead of a fixed value) plus coherent layered
+# fills so streams feel intentional. v2/v3 keep a fixed target for comparison;
+# v1 is the original subtractive baseline (flat-NPS bug on calm songs).
+DEFAULT_STRATEGY = "musical"
 VARIANTS: dict[str, tuple[str, str]] = {
     # id -> (display name, density strategy)
     "v1-onset": ("TempoSync v1 (onset-thin)", "subtractive"),
     "v2-grid": ("TempoSync v2 (adaptive grid)", "adaptive"),
     "v3-energy": ("TempoSync v3 (energy-aware)", "energy"),
+    "v4-musical": ("TempoSync v4 (song-adaptive)", "musical"),
 }
-DEFAULT_VARIANT = "v2-grid"
+DEFAULT_VARIANT = "v4-musical"
 
 
 def _select_jumps(notes: list[QuantizedNote], cfg: DifficultyConfig) -> set[int]:
