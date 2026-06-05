@@ -11,6 +11,7 @@ DDC has no local/offline mode (only a web demo), so it is not run here; if a DDC
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -18,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 from dataclasses import dataclass, field, asdict
 
 from . import footgraph, generate, metrics
@@ -34,12 +36,30 @@ def repo_root() -> str:
 
 
 def slugify(name: str) -> str:
-    """Make a filesystem- and StepMania-friendly name (Windows-safe)."""
-    name = re.sub(r"[\\/:*?\"<>|]", "", name)   # illegal on Windows
-    name = re.sub(r"[\x00-\x1f]", "", name)      # control chars / newlines
-    name = re.sub(r"\s+", " ", name).strip()
-    name = name.rstrip(". ")                      # no trailing dot/space on Windows
-    return name or "song"
+    """ASCII-safe filesystem / StepMania folder name (Windows-safe).
+
+    StepMania reads the *display* name from the chart's #TITLE / #ARTIST tags,
+    not from the folder or file name, so we can keep folder and file names plain
+    ASCII without losing the original (e.g. Japanese) title in-game. Accented
+    Latin is transliterated (é -> e) and other non-ASCII (e.g. CJK) is dropped;
+    if a title is entirely non-Latin we fall back to a short, stable hash so each
+    song still gets a unique folder.
+    """
+    original = name or ""
+    ascii_name = (
+        unicodedata.normalize("NFKD", original)
+        .encode("ascii", "ignore")
+        .decode("ascii")
+    )
+    ascii_name = re.sub(r"[\\/:*?\"<>|]", "", ascii_name)   # illegal on Windows
+    ascii_name = re.sub(r"[\x00-\x1f]", "", ascii_name)      # control chars
+    ascii_name = re.sub(r"\s+", " ", ascii_name).strip()
+    ascii_name = ascii_name.rstrip(". ")                     # no trailing dot/space
+    if ascii_name:
+        return ascii_name
+    # Nothing ASCII survived (e.g. a fully Japanese title): use a stable hash.
+    digest = hashlib.md5(original.strip().encode("utf-8")).hexdigest()[:8]
+    return f"song-{digest}"
 
 
 def _find_exe(name: str) -> str | None:
@@ -329,7 +349,10 @@ def run_ours(
         song_slug = slugify(title)
         folder = os.path.join(pack, song_slug)
         os.makedirs(folder, exist_ok=True)
-        music_name = os.path.basename(audio_path)
+        # Use an ASCII filename for the audio too (the source mp3 may be named
+        # with non-Latin characters); the in-game title still comes from #TITLE.
+        ext = os.path.splitext(audio_path)[1] or ".mp3"
+        music_name = f"{song_slug}{ext}"
         sim.music = music_name
         shutil.copy2(audio_path, os.path.join(folder, music_name))
         sm_path = os.path.join(folder, f"{song_slug}.sm")
@@ -393,10 +416,11 @@ def run_autostepper(
             if not tmp_sm:
                 res.error = "produced no .sm output"
                 return res
-            # Copy the .sm next to the audio in the final (Unicode-safe) folder.
-            music_name = os.path.basename(audio_path)
+            # Copy the .sm next to the audio in the final (ASCII-named) folder.
+            ext = os.path.splitext(audio_path)[1] or ".mp3"
+            music_name = f"{song_slug}{ext}"
             shutil.copy2(audio_path, os.path.join(as_out, music_name))
-            sm_path = os.path.join(as_out, music_name + ".sm")
+            sm_path = os.path.join(as_out, f"{song_slug}.sm")
             # Rewrite the #MUSIC tag so the chart points at the copied audio.
             bsim = parse_sm_file(tmp_sm)
             bsim.music = music_name
