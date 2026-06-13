@@ -39,13 +39,16 @@ class DifficultyConfig:
     candle_penalty: float
     jack_penalty: float = 14.0     # same foot hits the same arrow again
     repeat_penalty: float = 4.0    # a foot that stays put (causes lane collapse)
+    # Upper limit on how much the song-adaptive density may scale this tier up.
+    # Kept low for beginner tiers so busy songs don't make easy charts dense.
+    density_cap: float = 1.6
 
 # Sensible defaults spanning Beginner -> Challenge (ITG-ish meters).
 DIFFICULTIES: dict[str, DifficultyConfig] = {
-    "Beginner": DifficultyConfig("Beginner", 2, 1.2, (4,), 0.0, 0.0,
-                                 False, 1e6, 50.0, 30.0),
-    "Easy": DifficultyConfig("Easy", 4, 2.2, (4, 8), 0.02, 0.15,
-                             False, 1e6, 30.0, 20.0),
+    "Beginner": DifficultyConfig("Beginner", 1, 0.9, (4,), 0.0, 0.0,
+                                 False, 1e6, 50.0, 30.0, density_cap=1.0),
+    "Easy": DifficultyConfig("Easy", 3, 1.9, (4, 8), 0.0, 0.10,
+                             False, 1e6, 30.0, 20.0, density_cap=1.2),
     "Medium": DifficultyConfig("Medium", 6, 3.5, (4, 8, 16), 0.06, 0.20,
                                False, 200.0, 18.0, 10.0),
     "Hard": DifficultyConfig("Hard", 8, 5.0, (4, 8, 16), 0.10, 0.15,

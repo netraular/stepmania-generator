@@ -9,7 +9,7 @@ async function loadCapabilities() {
     const caps = await fetch("/api/capabilities").then((r) => r.json());
     const box = $("#difficulties");
     box.innerHTML = "";
-    const defaults = new Set(["Easy", "Medium", "Hard"]);
+    const defaults = new Set(["Beginner", "Easy", "Medium", "Hard"]);
     caps.difficulties.forEach((name) => {
       const label = document.createElement("label");
       label.className = "chip" + (defaults.has(name) ? " active" : "");

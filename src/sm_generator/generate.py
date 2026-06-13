@@ -100,6 +100,13 @@ def _apply_holds(measures: list[list[str]], cfg: DifficultyConfig):
 
     A tap becomes a hold head (2) if the same panel is free for a while after
     it; a tail (3) is written shortly before the next event on that panel.
+
+    A hold pins one foot for its entire span, so it must be counted as a note
+    that occupies a foot: while a hold is held, at most ONE other panel may be
+    pressed at any instant (the free foot), otherwise the chart asks for three
+    simultaneous presses, which is impossible with two feet. We therefore only
+    commit a hold when the resulting simultaneous-press count stays within two
+    feet across its whole span.
     """
     if cfg.hold_rate <= 0:
         return measures
@@ -115,6 +122,27 @@ def _apply_holds(measures: list[list[str]], cfg: DifficultyConfig):
         r = list(m[idx % ROWS_PER_MEASURE])
         r[panel] = ch
         m[idx % ROWS_PER_MEASURE] = "".join(r)
+
+    def pressed_count(row: str) -> int:
+        # Panels physically pressed in this row: tap, hold head or roll head.
+        return sum(1 for ch in row if ch in "124")
+
+    # Spans of already-committed holds, so their (invisible) middle rows are
+    # also counted toward the two-foot limit when placing later holds.
+    held_spans: list[tuple[int, int]] = []
+
+    def occupancy(j: int) -> int:
+        """How many feet are busy at row j (taps/heads here + holds spanning).
+
+        A hold's head is already counted by ``pressed_count`` (the '2'); its
+        tail row still has the foot down at the moment of release, so a hold
+        occupies a foot across ``head < j <= tail``.
+        """
+        occ = pressed_count(get(j))
+        for s, e in held_spans:
+            if s < j <= e:  # inside an earlier hold, incl. its release row
+                occ += 1
+        return occ
 
     import random
     rng = random.Random(1234)
@@ -132,11 +160,28 @@ def _apply_holds(measures: list[list[str]], cfg: DifficultyConfig):
                     nxt = j
                     break
             span = (nxt - idx) if nxt else ROWS_PER_MEASURE // 2
-            if span >= 6:  # only hold if there is real room
-                tail = idx + span - 2
-                if tail > idx and tail < total_rows and get(tail)[panel] == "0":
-                    setc(idx, panel, "2")
-                    setc(tail, panel, "3")
+            if span < 6:  # only hold if there is real room
+                continue
+            tail = idx + span - 2
+            if not (tail > idx and tail < total_rows and get(tail)[panel] == "0"):
+                continue
+            # Reject if holding here would ever require a third simultaneous
+            # press: this hold occupies one foot across [idx, tail] (head is
+            # already in the grid, tail row still has the foot down), so every
+            # other row in that span may use at most one more foot.
+            feasible = True
+            for j in range(idx, tail + 1):
+                occ = occupancy(j)
+                if idx < j <= tail:
+                    occ += 1  # this hold's own foot is down through the release
+                if occ > 2:
+                    feasible = False
+                    break
+            if not feasible:
+                continue
+            setc(idx, panel, "2")
+            setc(tail, panel, "3")
+            held_spans.append((idx, tail))
     return measures
 
 

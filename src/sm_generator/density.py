@@ -94,7 +94,10 @@ def adaptive_target_nps(
     if song <= 0:
         return cfg.target_nps
     factor = song / REFERENCE_NPS
-    factor = min(max(factor, _FACTOR_MIN), _FACTOR_MAX)
+    # Beginner/Easy tiers cap how much a busy song may push their density up, so
+    # easy charts stay genuinely easy regardless of the song.
+    upper = min(_FACTOR_MAX, getattr(cfg, "density_cap", _FACTOR_MAX))
+    factor = min(max(factor, _FACTOR_MIN), upper)
     return cfg.target_nps * (factor ** blend)
 
 

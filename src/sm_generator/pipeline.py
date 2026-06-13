@@ -599,7 +599,7 @@ def run_pipeline(
     output_base = os.path.join(root, "output", "web")
 
     if difficulties is None:
-        difficulties = ["Easy", "Medium", "Hard"]
+        difficulties = ["Beginner", "Easy", "Medium", "Hard"]
 
     progress("Fetching track info", 5)
     if not title:
@@ -639,7 +639,7 @@ def run_job(
     output_base = os.path.join(root, "output", "web")
 
     if difficulties is None:
-        difficulties = ["Easy", "Medium", "Hard"]
+        difficulties = ["Beginner", "Easy", "Medium", "Hard"]
 
     # Single song -------------------------------------------------------------
     if not (playlist and is_playlist_url(url)):
